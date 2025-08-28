@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "types": ["mocha", "chai", "node"],
+    "typeRoots": ["./node_modules/@types"],
+    "lib": ["ES2022"],
+    "module": "es2022",
+    "target": "es2022",
+    "esModuleInterop": true,
+    "strict": true,
+    "outDir": "dist",
+    "sourceMap": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["tests/**/*.ts", "target/**/*.ts", "programs/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}
