@@ -5,10 +5,15 @@ members = [
 resolver = "2"
 
 [profile.release]
-overflow-checks = true
+overflow-checks = false
 lto = "fat"
 codegen-units = 1
-[profile.release.build-override]
 opt-level = 3
 incremental = false
+panic = "abort"
+strip = "symbols"
+debug = false
+
+[profile.release.package."*"]
+opt-level = 3
 codegen-units = 1
