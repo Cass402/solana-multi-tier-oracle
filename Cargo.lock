@@ -389,6 +389,9 @@ name = "bytemuck"
 version = "1.23.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3995eaeebcdf32f91f980d360f78732ddc061097ab4e39991ae7a6ace9194677"
+dependencies = [
+ "bytemuck_derive",
+]
 
 [[package]]
 name = "bytemuck_derive"
@@ -1487,6 +1490,7 @@ name = "solana-multi-tier-oracle"
 version = "0.1.0"
 dependencies = [
  "anchor-lang",
+ "bytemuck",
 ]
 
 [[package]]
