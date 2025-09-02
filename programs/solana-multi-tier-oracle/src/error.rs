@@ -8,4 +8,10 @@ pub enum StateError {
     ExcessiveLpConcentration,
     #[msg("Price manipulation detected")]
     ManipulationDetected,
+    #[msg("Caller does not have sufficient permissions for this operation")]
+    InsufficientPermissions,
+    #[msg("Caller is not authorized to perform this operation")]
+    UnauthorizedCaller,
+    #[msg("Too many active multisig members")]
+    TooManyActiveMembers,
 }
