@@ -1,6 +1,6 @@
 use crate::error::StateError;
 use crate::utils::constants::{MAX_PRICE_FEEDS, MAX_HISTORICAL_CHUNKS, MAX_LP_CONCENTRATION};
-use crate::state::price_feed::PriceFeed;
+use crate::state::{price_feed::PriceFeed, governance_state::Permissions};
 use anchor_lang::prelude::*;
 use bytemuck::{Pod, Zeroable};
 
@@ -47,7 +47,7 @@ pub struct OracleState {
     /// Unix timestamp of last successful price update.
     /// Used for staleness detection and circuit breaker logic.
     pub last_update: u64,
-    
+
     /// Fixed array of price feed sources to avoid heap allocation.
     /// Size chosen as power-of-2 for optimal memory alignment and cache performance.
     pub price_feeds: [PriceFeed; MAX_PRICE_FEEDS],
@@ -80,13 +80,24 @@ pub struct OracleState {
     /// Stored to avoid recomputation during account validation.
     pub bump: u8,
 
+    /// PDA bump seed for governance account derivation.
+    /// Cached separately to enable efficient governance permission checks without
+    /// requiring governance account recomputation on every oracle operation.
+    pub governance_bump: u8,
+
     /// References to historical price data chunks stored in separate accounts.
     /// Enables unbounded historical data while respecting account size limits.
     pub historical_chunks: [Pubkey; MAX_HISTORICAL_CHUNKS],
 
+    /// Emergency administrator with immediate halt capabilities.
+    /// Separate from main authority to enable rapid incident response without
+    /// requiring full governance consensus. This role can trigger emergency stops
+    /// but cannot perform configuration changes or upgrades.
+    pub emergency_admin: Pubkey,
+
     /// Explicit padding to ensure deterministic struct layout.
     /// Prevents compiler-dependent alignment issues across builds.
-    pub _padding: [u8; 4],
+    pub _padding: [u8; 3],
 
     /// Reserved space for future schema additions without breaking changes.
     /// Sized to accommodate common future fields while maintaining rent exemption.
@@ -366,5 +377,33 @@ impl OracleState {
         }
 
         Ok(())
+    }
+
+    /// Centralized permission validation with governance delegation.
+    /// 
+    /// # Architecture Rationale
+    /// 
+    /// This method provides a clean interface for permission checking while maintaining
+    /// separation of concerns. The oracle state doesn't need to understand governance
+    /// implementation details - it simply delegates to the governance system.
+    /// 
+    /// # Performance Considerations
+    /// 
+    /// By accepting the governance state as a parameter rather than storing a reference,
+    /// this design avoids borrowing complications and enables the caller to optimize
+    /// governance account access patterns. The governance state is typically already
+    /// loaded for instruction validation, so this pattern avoids redundant account reads.
+    /// 
+    /// # Security Design
+    /// 
+    /// Centralizing permission logic in the governance state ensures consistent
+    /// authorization semantics across all oracle operations. This prevents divergent
+    /// permission implementations that could create security vulnerabilities.
+    pub fn check_permission(
+        governance: &crate::state::governance_state::GovernanceState,
+        caller: &Pubkey,
+        required_permission: Permissions,
+    ) -> Result<()> {
+        governance.check_member_permission(caller, required_permission)
     }
 }
