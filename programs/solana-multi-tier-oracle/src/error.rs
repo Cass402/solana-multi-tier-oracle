@@ -15,3 +15,13 @@ pub enum StateError {
     #[msg("Too many active multisig members")]
     TooManyActiveMembers,
 }
+
+#[error_code]
+pub enum RaydiumObserverError {
+    #[msg("Raydium CLMM Observer: Invalid account owner")]
+    InvalidOwner,
+    #[msg("Raydium CLMM Observer: Account too small")]
+    TooSmall,
+    #[msg("Raydium CLMM Observer: Uninitialized observation state")]
+    Uninitialized,
+}
