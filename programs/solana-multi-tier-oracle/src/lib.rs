@@ -4,6 +4,7 @@ use anchor_lang::prelude::*;
 pub mod error;
 pub mod utils;
 pub mod state;
+pub mod components;
 
 declare_id!("4CLGL8iE73T7Wcwjt3q2XapX22iSxPpXFpYGhZ33yc9h");
 
