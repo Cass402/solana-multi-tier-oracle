@@ -24,4 +24,18 @@ pub enum RaydiumObserverError {
     TooSmall,
     #[msg("Raydium CLMM Observer: Uninitialized observation state")]
     Uninitialized,
+    #[msg("Raydium CLMM Observer: Invalid PDA derivation")]
+    BadPda,
+    #[msg("Raydium CLMM Observer: pool.observation_key mismatch with oracle")]
+    PoolMismatch,
+    #[msg("Raydium CLMM Observer: Invalid window")]
+    InvalidWindow,
+    #[msg("Raydium CLMM Observer: Invalid observation index")]
+    InvalidIndex,
+    #[msg("Raydium CLMM Observer: Insufficient time elapsed")]
+    InsufficientTime,
+    #[msg("Raydium CLMM Observer: Tick out of bounds")]
+    TickOutOfBounds,
+    #[msg("Raydium CLMM Observer: Math Error")]
+    MathError,
 }
