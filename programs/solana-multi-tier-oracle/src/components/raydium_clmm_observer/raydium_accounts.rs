@@ -22,7 +22,9 @@
 /// - Reader wrappers provide safe access patterns over unsafe raw pointer operations
 /// - Validation functions ensure account ownership and initialization before dereferencing
 use anchor_lang::prelude::*;
-use crate::components::raydium_clmm_observer::raydium_constants::{OBSERVATION_NUM, RAYDIUM_CLMM_PROGRAM_ID_DEVNET};
+use core::ptr;
+use core::mem::{size_of};
+use crate::components::raydium_clmm_observer::raydium_constants::{OBSERVATION_NUM, RAYDIUM_CLMM_PROGRAM_ID_DEVNET, OBSERVATION_SEED};
 use crate::error::RaydiumObserverError;
 
 /// Size of invariant prefix fields in PoolState that precede the fields we need.
@@ -158,244 +160,425 @@ pub struct PoolStatePartial {
 
 // ============ Zero-copy reader wrappers ============
 
-/// Safe wrapper for accessing observation data with cached performance optimizations.
+/// Lightweight proxy for safe access to packed Observation data via unsafe pointers.
 /// 
-/// # Safety Abstraction Design
+/// # Safety Abstraction Strategy
 /// 
-/// This wrapper provides a safe interface over the unsafe packed struct, implementing
-/// several important safety and performance patterns:
+/// This proxy wraps raw pointer access to packed structs, providing a safe interface
+/// while maintaining zero-copy performance. The design isolates unsafe operations
+/// within controlled methods that handle alignment and dereferencing correctly.
 /// 
-/// - **Lifetime Binding**: Ensures the wrapper cannot outlive the underlying data
-/// - **Bounds Checking**: Safe array access with modulo arithmetic for circular buffer
-/// - **Index Caching**: Avoids repeated field access for frequently-used values
-/// - **Immutable Interface**: Read-only access prevents accidental state corruption
+/// # Copy Semantics
+/// 
+/// Implements Copy to enable efficient passing without move semantics overhead,
+/// critical for high-frequency price data access in TWAP calculations. The proxy
+/// itself is just a pointer wrapper, making copying trivially cheap.
+#[derive(Clone, Copy)]
+pub struct ObservationProxy {
+    /// Raw pointer to packed Observation struct in account data.
+    /// Must be valid for the lifetime of the containing ObservationReader to prevent UAF.
+    data: *const Observation,
+}
+
+impl ObservationProxy {
+    /// Extract block timestamp using unaligned read to handle packed struct memory layout.
+    /// 
+    /// # Alignment Safety
+    /// 
+    /// Uses read_unaligned because packed structs don't guarantee field alignment,
+    /// and direct field access could cause alignment faults on some architectures.
+    /// The addr_of! macro creates a pointer without intermediate references,
+    /// preventing undefined behavior from creating unaligned references.
+    #[inline(always)]
+    pub fn block_timestamp(self) -> u32 {
+        unsafe { ptr::read_unaligned(ptr::addr_of!((*self.data).block_timestamp)) }
+    }
+
+    /// Extract tick cumulative value using safe unaligned pointer arithmetic.
+    /// 
+    /// # Memory Layout Considerations
+    /// 
+    /// The packed struct layout means tick_cumulative may not be aligned to its
+    /// natural boundary, requiring unaligned reads. This pattern is essential
+    /// for compatibility with Raydium's C-style packed struct definitions.
+    #[inline(always)]
+    pub fn tick_cumulative(self) -> i64 {
+        unsafe { ptr::read_unaligned(ptr::addr_of!((*self.data).tick_cumulative)) }
+    }
+}
+
+/// Safe reader wrapper for ObservationState with managed lifetime and cached metadata.
+/// 
+/// # Lifetime Management Strategy
+/// 
+/// Holds a borrowing reference to account data to ensure the underlying memory
+/// remains valid for the reader's lifetime. This prevents use-after-free bugs
+/// that could occur if the account data is deallocated while pointers remain active.
 /// 
 /// # Performance Optimizations
 /// 
-/// The cached_index field stores the observation_index value to avoid repeated
-/// packed struct field access, which can be expensive due to unaligned memory reads.
+/// - Caches frequently accessed observation_index to avoid repeated unsafe reads
+/// - Uses direct pointer arithmetic for O(1) observation access within circular buffer
+/// - Inlines critical path methods to eliminate function call overhead
+/// 
+/// # Memory Safety Architecture
+/// 
+/// The reader maintains both a reference to keep data alive and a typed pointer
+/// for efficient access. This dual approach ensures safety while maximizing performance
+/// for time-critical TWAP calculations.
 pub struct ObservationReader <'a> {
-    /// Immutable reference to the underlying observation data.
-    /// Lifetime parameter ensures this wrapper cannot outlive the source account data.
-    data: &'a ObservationState,
+    /// Borrowed reference keeping account data alive for reader lifetime.
+    /// Prevents the account data from being deallocated while we hold pointers into it.
+    _data_ref: std::cell::Ref<'a, &'a mut [u8]>,
     
-    /// Cached copy of observation_index to avoid repeated packed field access.
-    /// Accessing fields in packed structs can be expensive due to alignment requirements.
+    /// Typed pointer to ObservationState for zero-copy field access.
+    /// Valid as long as _data_ref remains alive, ensuring no dangling pointer access.
+    data: *const ObservationState,
+    
+    /// Cached observation index to avoid repeated unsafe pointer reads.
+    /// Updated only during construction since index changes require account updates.
     cached_index: u16,
 }
 
 impl<'a> ObservationReader<'a> {
-    /// Creates a new reader with performance optimization caching.
+    /// Construct reader with validation and pointer initialization for zero-copy access.
     /// 
-    /// Immediately caches the observation_index to avoid repeated access to packed struct fields,
-    /// which can incur performance penalties due to unaligned memory reads.
+    /// # Validation Strategy
+    /// 
+    /// Performs size validation before creating pointers to prevent buffer overflows
+    /// when accessing ObservationState fields. The 8-byte offset accounts for Anchor's
+    /// discriminator prefix that precedes all account data.
+    /// 
+    /// # Caching Rationale
+    /// 
+    /// Immediately caches the observation_index to avoid repeated unsafe reads during
+    /// TWAP calculations. Since index updates require full account updates, this
+    /// caching approach is safe and provides meaningful performance benefits.
     #[inline]
-    pub fn new(data: &'a ObservationState) -> Self {
-        Self {
-            data,
-            cached_index: data.observation_index,
-        }
+    pub fn new_ptr(account_info: &'a AccountInfo) -> Result<Self> {
+        let data = account_info.try_borrow_data()?;
+        
+        // Validate account has sufficient size for discriminator + ObservationState
+        // Prevents buffer overflows during pointer arithmetic and field access
+        require!(data.len() >= 8 + size_of::<ObservationState>(), RaydiumObserverError::TooSmall);
+
+        // Skip 8-byte Anchor discriminator to access actual account data
+        let ptr = unsafe { data.as_ptr().add(8) as *const ObservationState };
+
+        let reader = Self {
+            _data_ref: data,
+            data: ptr,
+            // Cache index immediately to avoid repeated unsafe reads during TWAP operations
+            cached_index: unsafe { ptr::read_unaligned(ptr::addr_of!((*ptr).observation_index)) },
+        };
+
+        Ok(reader)
     }
 
-    /// Safely accesses observation at given index using circular buffer semantics.
+    /// Access individual observation using modular arithmetic for circular buffer traversal.
     /// 
-    /// The modulo operation ensures safe access even if the caller provides an invalid index,
-    /// implementing the circular buffer behavior expected for TWAP calculations.
-    /// This approach trades a small performance cost for robust error handling.
+    /// # Circular Buffer Safety
+    /// 
+    /// Uses modular arithmetic (index % OBSERVATION_NUM) to ensure array bounds safety
+    /// even with invalid input indices. This prevents buffer overflows while providing
+    /// efficient O(1) access to any observation in the circular buffer.
+    /// 
+    /// # Pointer Arithmetic Strategy
+    /// 
+    /// Calculates observation addresses using direct pointer arithmetic rather than
+    /// array indexing to maintain zero-copy performance. The unsafe pointer operations
+    /// are contained within this method, providing a safe interface to callers.
     #[inline]
-    pub fn get_observation(&self, index: usize) -> &Observation {
-        &self.data.observations[index % OBSERVATION_NUM]
+    pub fn get_observation(&self, index: usize) -> ObservationProxy {
+        // Get base address of observations array within ObservationState
+        let observation_0 = unsafe { ptr::addr_of!((*self.data).observations) as *const Observation };
+        
+        // Use modular arithmetic to ensure bounds safety in circular buffer access
+        let ptr = unsafe { observation_0.add(index % OBSERVATION_NUM) };
+
+        ObservationProxy { data: ptr }
     }
 
-    /// Returns the cached current write position for optimal performance.
+    /// Return cached current index for efficient circular buffer navigation.
     /// 
-    /// Uses the cached value rather than re-reading from the packed struct to avoid
-    /// potential performance penalties from unaligned field access.
+    /// # Caching Benefits
+    /// 
+    /// Returns pre-cached index value to avoid unsafe pointer reads during TWAP
+    /// calculations where index access frequency is high. The cached value remains
+    /// valid since index updates require account state changes visible to our reader.
     #[inline]
     pub fn current_index(&self) -> usize {
         self.cached_index as usize
     }
 
-    /// Checks initialization status to prevent reading invalid observation data.
+    /// Check initialization state using unaligned read for packed struct compatibility.
     /// 
-    /// Critical safety check since uninitialized observation buffers contain
-    /// arbitrary memory contents that could produce invalid TWAP calculations.
+    /// # Initialization Safety
+    /// 
+    /// Critical validation to prevent TWAP calculations on uninitialized observation
+    /// buffers that could contain arbitrary data. Uses unaligned read to handle
+    /// potential alignment issues in packed struct layout.
     #[inline]
     pub fn initialized(&self) -> bool {
-        self.data.initialized
+        unsafe { ptr::read_unaligned(ptr::addr_of!((*self.data).initialized)) }
     }
 
-    /// Returns the pool ID for verification and cross-referencing.
+    /// Extract pool identifier for observation-to-pool relationship verification.
     /// 
-    /// Enables callers to verify that observation data belongs to the expected pool,
-    /// preventing mixing of observation data from different trading pairs.
+    /// # Cross-Account Validation
+    /// 
+    /// Enables verification that observation data corresponds to the expected pool,
+    /// preventing cross-pool data contamination in multi-pool oracle operations.
+    /// Essential for maintaining data integrity in complex DeFi integrations.
     #[inline]
-    pub fn pool_id(&self) -> &Pubkey {
-        &self.data.pool_id
+    pub fn pool_id(&self) -> Pubkey {
+        unsafe { ptr::read_unaligned(ptr::addr_of!((*self.data).pool_id)) }
     }
 }
 
-/// Safe wrapper for accessing pool state data with zero-copy performance.
+/// Safe reader wrapper for PoolState with managed lifetime and zero-copy field access.
 /// 
-/// # Design Simplicity
+/// # Design Rationale
 /// 
-/// Unlike ObservationReader, this wrapper is simpler because pool state is accessed
-/// less frequently and doesn't require complex circular buffer logic. The wrapper
-/// still provides important safety guarantees by preventing direct access to the
-/// unsafe packed struct while maintaining zero-copy performance characteristics.
+/// Similar to ObservationReader but optimized for PoolState access patterns.
+/// Provides safe access to critical pool metadata needed for price calculations
+/// while maintaining zero-copy performance characteristics.
+/// 
+/// # Memory Management
+/// 
+/// Uses the same lifetime management strategy as ObservationReader to ensure
+/// underlying account data remains valid throughout the reader's usage period.
 pub struct PoolReader<'a> {
-    /// Immutable reference to the underlying pool state data.
-    /// Lifetime parameter ensures memory safety by preventing dangling references.
-    data: &'a PoolStatePartial,
+    /// Borrowed reference keeping account data alive for reader lifetime.
+    _data_ref: std::cell::Ref<'a, &'a mut [u8]>,
+    
+    /// Typed pointer to PoolStatePartial for efficient field access.
+    base: *const PoolStatePartial,
 }
 
 impl<'a> PoolReader<'a> {
-    /// Creates a new pool reader for safe data access.
+    /// Construct pool reader with validation and pointer setup for zero-copy access.
     /// 
-    /// Simple wrapper construction since pool state doesn't require the complex
-    /// caching optimizations needed for observation arrays.
+    /// # Size Validation Strategy
+    /// 
+    /// Validates account size against PoolStatePartial rather than full PoolState
+    /// since we only access a subset of fields. This approach is more resilient
+    /// to Raydium adding fields we don't use at the end of their struct.
     #[inline]
-    pub fn new(data: &'a PoolStatePartial) -> Self {
-        Self { data }
+    pub fn new_ptr(account_info: &'a AccountInfo) -> Result<Self> {
+        let data = account_info.try_borrow_data()?;
+        
+        // Ensure sufficient size for discriminator + PoolStatePartial fields
+        require!(data.len() >= 8 + size_of::<PoolStatePartial>(), RaydiumObserverError::TooSmall);
+
+        // Skip Anchor discriminator to access pool state data
+        let ptr = unsafe { data.as_ptr().add(8) as *const PoolStatePartial };
+
+        Ok(Self {
+            _data_ref: data,
+            base: ptr,
+        })
     }
 
-    /// Returns the observation account key for linking to historical price data.
+    /// Extract observation account key for pool-observation linkage verification.
     /// 
-    /// This key is essential for TWAP calculations as it connects the current pool
-    /// state to its historical observation buffer.
+    /// # Cross-Account Integrity
+    /// 
+    /// Critical for ensuring observation data matches the expected pool context.
+    /// Used in verification functions to prevent observation account spoofing
+    /// or incorrect pool-observation associations.
     #[inline]
-    pub fn observation_key(&self) -> &Pubkey {
-        &self.data.observation_key
+    pub fn observation_key(&self) -> Pubkey {
+        unsafe { ptr::read_unaligned(ptr::addr_of!((*self.base).observation_key)) }
     }
 
-    /// Returns token decimal precision for both tokens in the trading pair.
+    /// Return token decimal configuration for price precision calculations.
     /// 
-    /// Required for converting between raw tick values and human-readable prices
-    /// with correct decimal precision for each token.
+    /// # Price Conversion Context
+    /// 
+    /// Token decimals are essential for converting raw tick values to human-readable
+    /// prices with correct precision. Different tokens can have different decimal
+    /// places (e.g., USDC=6, ETH=18), requiring this metadata for accurate pricing.
     #[inline]
     pub fn decimals(&self) -> (u8, u8) {
-        (self.data.mint_decimals_0, self.data.mint_decimals_1)
+        let decimal_0 = unsafe { ptr::read_unaligned(ptr::addr_of!((*self.base).mint_decimals_0)) };
+        let decimal_1 = unsafe { ptr::read_unaligned(ptr::addr_of!((*self.base).mint_decimals_1)) };
+
+        (decimal_0, decimal_1)
     }
 
-    /// Returns the tick spacing configuration for this pool.
+    /// Get tick spacing configuration affecting price precision granularity.
     /// 
-    /// Determines price granularity and affects how tick movements translate
-    /// to actual price changes in the trading pair.
+    /// # Price Precision Impact
+    /// 
+    /// Tick spacing determines the minimum price increments possible in the pool.
+    /// Smaller spacing allows finer price precision but increases computational
+    /// overhead for large price movements. Critical for accurate TWAP calculations.
     #[inline]
     pub fn tick_spacing(&self) -> u16 {
-        self.data.tick_spacing
+        unsafe{ ptr::read_unaligned(ptr::addr_of!((*self.base).tick_spacing)) }
     }
 
-    /// Returns current liquidity available in the pool.
+    /// Extract current liquidity for manipulation risk assessment.
     /// 
-    /// Critical for assessing market depth and potential price impact of trades
-    /// when evaluating the reliability of price observations.
+    /// # Market Depth Analysis
+    /// 
+    /// Pool liquidity indicates how much capital is available at current prices.
+    /// Low liquidity pools are more susceptible to price manipulation and may
+    /// require higher confidence thresholds in oracle risk assessments.
     #[inline]
     pub fn liquidity(&self) -> u128 {
-        self.data.liquidity
+        unsafe { ptr::read_unaligned(ptr::addr_of!((*self.base).liquidity)) }
     }
 
-    /// Returns current sqrt price in Q64.64 fixed-point format.
+    /// Get current sqrt price in Q64.64 fixed-point format for precise calculations.
     /// 
-    /// Provides precise price representation avoiding floating-point precision issues
-    /// that could accumulate errors in TWAP calculations.
+    /// # Fixed-Point Precision Strategy
+    /// 
+    /// Q64.64 format provides sufficient precision for financial calculations
+    /// while avoiding floating-point precision issues. The sqrt representation
+    /// enables efficient computation of price ratios and tick conversions.
     #[inline]
     pub fn sqrt_price_x64(&self) -> u128 {
-        self.data.sqrt_price_x64
+        unsafe { ptr::read_unaligned(ptr::addr_of!((*self.base).sqrt_price_x64)) }
     }
 
-    /// Returns the current active tick representing pool price state.
+    /// Extract current tick representing the pool's active price level.
     /// 
-    /// This tick value forms the basis for cumulative tick calculations
-    /// used in TWAP observations and price averaging algorithms.
+    /// # Price State Context
+    /// 
+    /// The current tick serves as the reference point for TWAP calculations
+    /// and indicates the pool's instantaneous price state. Forms the basis
+    /// for tick_cumulative updates in new observations.
     #[inline]
     pub fn tick_current(&self) -> i32 {
-        self.data.tick_current
+        unsafe { ptr::read_unaligned(ptr::addr_of!((*self.base).tick_current)) }
     }
 }
 
 // ============ Zero-copy readers ============
 
-/// Generic zero-copy reader for Raydium account data with safety validation.
+/// Generic zero-copy pointer extraction with validation for any Anchor account type.
 /// 
-/// # Safety and Performance Trade-offs
+/// # Generic Design Strategy
 /// 
-/// This function performs unsafe pointer arithmetic to achieve zero-copy reads from
-/// account data, trading safety for performance. The approach eliminates serialization
-/// overhead but requires careful validation to prevent undefined behavior:
+/// Provides a reusable pattern for zero-copy account access across different account
+/// types. The generic approach eliminates code duplication while maintaining type
+/// safety for the resulting pointers.
 /// 
-/// - **Memory Layout Assumptions**: Assumes standard Anchor account layout (8-byte discriminator + data)
-/// - **Alignment Requirements**: Relies on proper struct alignment for safe pointer casting
-/// - **Lifetime Management**: Borrows account data to ensure the returned reference remains valid
+/// # Validation Approach
 /// 
-/// # Validation Strategy
-/// 
-/// Multiple validation layers ensure safe operation:
-/// 1. Account data borrow check ensures exclusive access
-/// 2. Size validation prevents reading beyond account boundaries  
-/// 3. Unsafe pointer arithmetic with compile-time size checking
+/// Performs size validation before pointer creation to prevent buffer overflows.
+/// The 8-byte offset accounts for Anchor's account discriminator that precedes
+/// all account data in the Solana account model.
 #[inline]
-pub fn read_zc<'a, T>(account_info: &'a AccountInfo) -> Result<&'a T> {
-    // Borrow account data with runtime validation to ensure exclusive access
+pub fn read_zc_ptr<T>(account_info: &AccountInfo) -> Result<*const T> {
     let data = account_info.try_borrow_data()?;
     
-    // Validate account contains sufficient data for discriminator + struct
-    // This prevents reading beyond account boundaries which would cause UB
+    // Validate sufficient space for discriminator + target struct
     require!(data.len() >= 8 + size_of::<T>(), RaydiumObserverError::TooSmall);
-    
-    // Skip 8-byte Anchor discriminator and cast to target struct type
-    // SAFETY: We've validated sufficient data exists and assume correct alignment
-    let p = unsafe { data.as_ptr().add(8) as *const T };
-    Ok(unsafe { &*p } )
+
+    // Skip 8-byte Anchor discriminator to access actual account data
+    let ptr = unsafe { data.as_ptr().add(8) as *const T };
+
+    Ok(ptr)
 }
 
-/// Safely reads and validates Raydium pool account data.
+/// Create validated PoolReader with ownership verification for cross-program security.
 /// 
-/// # Security Validation
+/// # Cross-Program Security Model
 /// 
-/// Implements multiple security checks to ensure we're reading valid Raydium pool data:
-/// 1. **Program Ownership**: Verifies the account is owned by the correct Raydium program
-/// 2. **Data Structure**: Validates account contains properly formatted pool state
-/// 3. **Wrapper Creation**: Returns safe reader interface over validated raw data
+/// Validates account ownership before creating reader to prevent spoofing attacks
+/// where malicious accounts mimic Raydium pool structures. Ownership verification
+/// is fundamental to cross-program invocation security in Solana.
 /// 
-/// The ownership check is critical for preventing attacks where malicious accounts
-/// with crafted data could be passed as legitimate Raydium pools.
+/// # Performance Strategy
+/// 
+/// Combines ownership validation with reader creation in single function to
+/// reduce call overhead while maintaining security. Inlined for zero-cost
+/// abstraction in hot code paths.
 #[inline]
-pub fn read_pool<'a>(account_info: &'a AccountInfo) -> Result<PoolReader<'a>> {
-    // Verify account is owned by Raydium CLMM program to prevent spoofing attacks
-    require_keys_eq!(*account_info.owner, RAYDIUM_CLMM_PROGRAM_ID_DEVNET, RaydiumObserverError::InvalidOwner);
-    
-    // Perform zero-copy read with structure validation
-    let data = read_zc::<PoolStatePartial>(account_info)?;
-    
-    // Return safe wrapper over validated raw data
-    Ok(PoolReader::new(data))
+pub fn read_pool<'a>(account_info: &'a AccountInfo, program_id: &Pubkey) -> Result<PoolReader<'a>> {
+    // Verify account is owned by legitimate Raydium program to prevent spoofing
+    require_keys_eq!(*account_info.owner, *program_id, RaydiumObserverError::InvalidOwner);
+    PoolReader::new_ptr(account_info)
 }
 
-/// Safely reads and validates Raydium observation account data.
+/// Create validated ObservationReader with comprehensive security checks.
 /// 
-/// # Enhanced Validation
+/// # Multi-Layer Validation Strategy
 /// 
-/// Includes additional validation beyond the pool reader:
-/// 1. **Program Ownership**: Ensures account belongs to Raydium CLMM program
-/// 2. **Data Structure**: Validates account structure and size
-/// 3. **Initialization Check**: Verifies observation buffer has been properly initialized
+/// Implements defense-in-depth by combining:
+/// 1. Ownership verification to prevent account spoofing
+/// 2. Initialization checks to avoid reading uninitialized data
+/// 3. Size validation within the reader constructor
 /// 
-/// The initialization check is crucial because uninitialized observation buffers
-/// contain arbitrary memory that could produce invalid TWAP calculations if used
-/// in price aggregation algorithms.
+/// This layered approach ensures observation data integrity even if individual
+/// checks are bypassed or fail due to edge case conditions.
+/// 
+/// # Oracle Security Context
+/// 
+/// Particularly critical for oracle operations where corrupted price data could
+/// propagate through the system and enable economic exploits. The validation
+/// ensures only legitimate, initialized Raydium observations are processed.
 #[inline]
-pub fn read_observation<'a>(account_info: &'a AccountInfo) -> Result<ObservationReader<'a>> {
-    // Verify account is owned by Raydium CLMM program to prevent spoofing attacks
-    require_keys_eq!(*account_info.owner, RAYDIUM_CLMM_PROGRAM_ID_DEVNET, RaydiumObserverError::InvalidOwner);
+pub fn read_observation<'a>(account_info: &'a AccountInfo, program_id: &Pubkey) -> Result<ObservationReader<'a>> {
+    // First layer: Verify account ownership to prevent spoofing attacks
+    require_keys_eq!(*account_info.owner, *program_id, RaydiumObserverError::InvalidOwner);
+
+    let reader = ObservationReader::new_ptr(account_info)?;
     
-    // Perform zero-copy read with structure validation
-    let data = read_zc::<ObservationState>(account_info)?;
+    // Second layer: Ensure observation buffer is properly initialized
+    // Prevents TWAP calculations on arbitrary uninitialized memory
+    require!(reader.initialized(), RaydiumObserverError::Uninitialized);
+
+    Ok(reader)
+}
+
+/// Comprehensive pool-observation relationship verification with PDA validation.
+/// 
+/// # Account Relationship Security
+/// 
+/// Implements multi-point verification to ensure authentic pool-observation linkage:
+/// 1. **PDA Derivation**: Verifies observation account matches expected derivation
+/// 2. **Ownership Validation**: Confirms pool account is owned by Raydium program
+/// 3. **Cross-Reference Check**: Validates pool's observation_key matches provided account
+/// 
+/// # Attack Prevention Strategy
+/// 
+/// This comprehensive verification prevents several attack vectors:
+/// - **PDA Spoofing**: Fake observation accounts with similar addresses
+/// - **Pool Substitution**: Using legitimate observations with wrong pools
+/// - **Cross-Pool Contamination**: Mixing price data between different pools
+/// 
+/// # Network Configuration
+/// 
+/// Currently hardcoded to DEVNET program ID for development safety.
+/// Production deployments should parameterize this based on network detection.
+#[inline]
+pub fn verify_observation_pda_and_read_pool<'a>(
+    pool_account_info: &'a AccountInfo,
+    observation_account_info: &'a AccountInfo,
+    program_id: &Pubkey,
+) -> Result<PoolReader<'a>> {
+    // Derive expected observation account address using Raydium's PDA scheme
+    // Seeds: "observation" + pool_pubkey ensures unique observation per pool
+    let (derived, _) = Pubkey::find_program_address(&[
+        OBSERVATION_SEED.as_ref(),
+        pool_account_info.key.as_ref(),
+    ],
+        &RAYDIUM_CLMM_PROGRAM_ID_DEVNET  // Network-aware program ID selection
+    );
     
-    // Critical safety check: ensure observation buffer has been initialized
-    // Uninitialized buffers contain arbitrary memory that would corrupt TWAP calculations
-    require!(data.initialized, RaydiumObserverError::Uninitialized);
+    // Verify provided observation account matches expected PDA derivation
+    require_keys_eq!(derived, *observation_account_info.key, RaydiumObserverError::BadPda);
+
+    // Create validated pool reader with ownership checks
+    let pool = read_pool(pool_account_info, program_id)?;
     
-    // Return safe wrapper over validated and initialized data
-    Ok(ObservationReader::new(data))
+    // Cross-validate that pool's observation_key references the provided observation account
+    // Prevents pool-observation mixups that could corrupt TWAP calculations
+    require_keys_eq!(pool.observation_key(), *observation_account_info.key, RaydiumObserverError::PoolMismatch);
+    
+    Ok(pool)
 }
