@@ -79,9 +79,17 @@ pub struct HistoricalChunk {
 /// - **Analytical Completeness**: Volume data enables sophisticated manipulation detection
 ///   and market microstructure analysis over time
 /// - **Storage Efficiency**: Compact representation minimizes account storage costs for
-///   large historical datasets spanning months or years
+///   large historical datasets spanning days or weeks
 /// - **Cross-Platform Compatibility**: Explicit padding ensures consistent layout across
 ///   different architectures and compiler versions
+/// 
+/// # Storage Optimization Strategy
+/// 
+/// Historical data is stored at 15-minute intervals rather than real-time updates to:
+/// - **Reduce Rent Costs**: 96x fewer storage requirements vs 15-second intervals
+/// - **Minimize CU Usage**: Fewer account reads during TWAP calculations
+/// - **Enable Extended History**: 10+ days of data fits within MAX_HISTORICAL_CHUNKS
+/// - **Maintain Accuracy**: 15-minute granularity sufficient for longer-term TWAPs
 /// 
 /// # Field Selection Rationale
 /// 
@@ -91,31 +99,27 @@ pub struct HistoricalChunk {
 /// - Volume: Critical for detecting manipulation patterns and market health metrics
 /// - Padding: Prevents subtle alignment bugs that could corrupt historical data
 #[derive(Clone, Copy, Debug, Pod, Zeroable, InitSpace)]
-#[repr(C)]
+#[repr(C, packed)]
 pub struct PricePoint {
     /// Price value in scaled integer format (apply expo for decimal representation).
     /// Signed to accommodate negative values for derivatives and spread instruments.
-    pub price: i64,
-    
+    pub price: i128,
+
+    /// Trading volume associated with this price point.
+    /// Enables sophisticated manipulation detection and market depth analysis over time.
+    pub volume: i128,
+
     /// Confidence interval indicating price uncertainty at time of recording.
     /// Higher values suggest less reliable data, useful for historical quality analysis.
     pub conf: u64,
     
     /// Unix timestamp when this price point was recorded.
     /// Essential for temporal analysis and time-weighted average calculations.
-    pub timestamp: u64,
-    
-    /// Trading volume associated with this price point.
-    /// Enables sophisticated manipulation detection and market depth analysis over time.
-    pub volume: u64,
+    pub timestamp: i64,
     
     /// Base-10 exponent for price scaling (e.g., -6 for microunits).
     /// Maintains consistency with real-time price representation standards.
     pub expo: i32,
-    
-    /// Explicit padding ensures deterministic memory layout.
-    /// Critical for historical data integrity across different deployment environments.
-    pub _padding: [u8; 4],
 }
 
 impl HistoricalChunk {

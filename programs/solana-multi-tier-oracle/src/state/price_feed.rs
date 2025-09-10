@@ -28,7 +28,15 @@ pub struct PriceFeed {
     
     /// Most recent price value from this source in scaled integer format.
     /// Signed to support negative prices for derivatives and spread instruments.
-    pub last_price: i64,
+    pub last_price: i128,
+
+    /// 24-hour trading volume to assess market activity and manipulation resistance.
+    /// Higher volume typically correlates with harder-to-manipulate prices.
+    pub volume_24h: i128,
+    
+    /// Available liquidity depth for price impact analysis.
+    /// Used to estimate how much capital would be needed to move the price significantly.
+    pub liquidity_depth: i128,
     
     /// Confidence interval for the last price reading.
     /// Higher values indicate less reliable data, used in weighted aggregation.
@@ -36,15 +44,7 @@ pub struct PriceFeed {
     
     /// Unix timestamp of the most recent price update.
     /// Critical for staleness detection and temporal weighting in TWAP calculations.
-    pub last_update: u64,
-    
-    /// 24-hour trading volume to assess market activity and manipulation resistance.
-    /// Higher volume typically correlates with harder-to-manipulate prices.
-    pub volume_24h: u64,
-    
-    /// Available liquidity depth for price impact analysis.
-    /// Used to estimate how much capital would be needed to move the price significantly.
-    pub liquidity_depth: u64,
+    pub last_update: i64,
     
     /// Decimal exponent for price scaling (e.g., -6 for microunits).
     /// Enables consistent representation across assets with vastly different nominal values.
