@@ -38,4 +38,6 @@ pub enum RaydiumObserverError {
     TickOutOfBounds,
     #[msg("Raydium CLMM Observer: Math Error")]
     MathError,
+    #[msg("Raydium CLMM Observer: Excessive tick deviation")]
+    ExcessiveDeviation,
 }
