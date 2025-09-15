@@ -14,6 +14,34 @@ pub enum StateError {
     UnauthorizedCaller,
     #[msg("Too many active multisig members")]
     TooManyActiveMembers,
+    #[msg("Asset seed does not match canonical asset ID hash")]
+    InvalidAssetSeed,
+    #[msg("Invalid asset ID: must be non-empty and <= 64 characters")]
+    InvalidAssetId,
+    #[msg("Invalid member key: cannot be default Pubkey")]
+    InvalidMemberKey,
+    #[msg("Duplicate member found in initial members list")]
+    DuplicateMember,
+    #[msg("Authority must be an initial member with admin permissions")]
+    AuthorityNotAdminMember,
+    #[msg("Invalid TWAP window: must be > 0 and. <= 345_600 seconds (96 hours)")]
+    InvalidTWAPWindow,
+    #[msg("Invalid confidence threshold: must be <= 10_000 basis points (100%)")]
+    InvalidConfidenceThreshold,
+    #[msg("Invalid manipulation threshold: must be > 0 and <= 10_000 basis points (100%)")]
+    InvalidManipulationThreshold,
+    #[msg("Invalid member count: must be > 0 and <= 16")]
+    InvalidMemberCount,
+    #[msg("Invalid multisig threshold: must be > 0 and <= member count")]
+    InvalidMultisigThreshold,
+    #[msg("Invalid emergency admin: cannot be default Pubkey")]
+    InvalidEmergencyAdmin,
+    #[msg("Invalid quorum threshold: must be > 0 and <= 10_000 basis points")]
+    InvalidQuorumThreshold,
+    #[msg("Invalid timing parameters: voting_period must be > 0, execution_delay >= 0")]
+    InvalidTimingParameters,
+    #[msg("Invalid proposal threshold: must be > 0")]
+    InvalidProposalThreshold,
 }
 
 #[error_code]

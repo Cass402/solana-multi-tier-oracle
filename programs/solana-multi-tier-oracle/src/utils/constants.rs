@@ -4,6 +4,11 @@ pub const BUFFER_SIZE: usize = 128; // power of 2 for efficiency
 pub const MAX_HISTORICAL_CHUNKS: usize = 8; 
 pub const MAX_LP_CONCENTRATION: u16 = 3_000; // 30%
 pub const MAX_MULTISIG_MEMBERS: usize = 16;
+pub const MAX_TWAP_WINDOW: u32 = 345_600; // 96 hours in seconds
+pub const MAX_CONFIDENCE_THRESHOLD: u16 = 10_000; // 100% in basis points
+pub const MAX_MANIPULATION_THRESHOLD: u16 = 10_000; // 100% in basis points
+pub const MAX_QUORUM_THRESHOLD: u16 = 10_000; // 100% in basis points
+pub const DEFAULT_VETO_PERIOD: i64 = 86400; // 24 hours in seconds
 
 /// Snapshot tracking constants for redemption quality control
 /// (leverages existing HistoricalChunk infrastructure)
@@ -19,4 +24,4 @@ pub const SECONDS_PER_96H: i64 = 345600; // 96 hours maximum supported window
 /// PDA seed constants
 pub const ORACLE_STATE_SEED: &[u8] = b"oracle_state";
 pub const HISTORICAL_CHUNK_SEED: &[u8] = b"historical_chunk";
-pub const GOVERNANCE: &[u8] = b"governance";
+pub const GOVERNANCE_SEED: &[u8] = b"governance";
