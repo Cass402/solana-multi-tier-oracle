@@ -19,7 +19,7 @@ use bytemuck::{Pod, Zeroable};
 /// 
 /// The struct layout orders fields by access frequency to optimize cache performance
 /// during price aggregation operations, which are the most compute-intensive workload.
-#[derive(Clone, Copy, Debug, Pod, Zeroable, InitSpace)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable, InitSpace, Default)]
 #[repr(C)]
 pub struct PriceFeed {
     /// Unique identifier for the price data source.

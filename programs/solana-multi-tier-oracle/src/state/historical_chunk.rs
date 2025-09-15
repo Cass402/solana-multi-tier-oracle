@@ -54,19 +54,29 @@ pub struct HistoricalChunk {
     
     /// Unix timestamp when this chunk was first created.
     /// Used for chunk lifecycle management and debugging temporal ordering.
-    pub creation_timestamp: u64,
+    pub creation_timestamp: i64,
     
     /// Reference to the subsequent chunk in the historical chain.
     /// Enables traversal of unbounded historical data across multiple accounts.
     pub next_chunk: Pubkey,
+
+    /// Public key of the parent oracle state account.
+    /// Facilitates integrity checks and cross-account operations.
+    pub oracle_state: Pubkey,
     
     /// Fixed-size circular buffer storing price data points.
     /// Size chosen as power-of-2 to enable efficient modulo via bitwise AND operations.
     pub price_points: [PricePoint; BUFFER_SIZE],
+
+    /// Bump seed used for PDA derivation of this account.
+    pub bump: u8,
+
+    /// Explicit padding to ensure deterministic memory layout across architectures
+    pub _padding: [u8; 7],
     
     /// Reserved space for future schema evolution without breaking changes.
     /// Prevents need for complex data migration when adding new functionality.
-    pub reserved: [u64; 8],
+    pub reserved: [u64; 40],
 }
 
 /// Individual price data point optimized for historical storage and analysis.
@@ -98,7 +108,7 @@ pub struct HistoricalChunk {
 /// - Timestamp: Enables temporal analysis and time-weighted calculations
 /// - Volume: Critical for detecting manipulation patterns and market health metrics
 /// - Padding: Prevents subtle alignment bugs that could corrupt historical data
-#[derive(Clone, Copy, Debug, Pod, Zeroable, InitSpace)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable, InitSpace, Default)]
 #[repr(C, packed)]
 pub struct PricePoint {
     /// Price value in scaled integer format (apply expo for decimal representation).

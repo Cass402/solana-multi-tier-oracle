@@ -70,6 +70,10 @@ pub struct GovernanceState {
     /// Explicit padding ensures deterministic struct layout.
     /// Critical for governance data integrity across deployment environments.
     pub _padding1: [u8; 3],
+
+    /// Public key of the associated oracle state account.
+    /// Facilitates cross-account integrity checks and operations.
+    pub oracle_state: Pubkey,
     
     /// Fixed array of multisig member public keys.
     /// Fixed size enables predictable governance account costs and zero-copy access.
@@ -81,7 +85,7 @@ pub struct GovernanceState {
     
     /// Reserved space for future governance features without breaking changes.
     /// Sized to accommodate common governance extensions while maintaining rent exemption.
-    pub reserved: [u64; 8],
+    pub reserved: [u64; 40],
 }
 
 /// Compact bitfield for governance permission flags with zero-copy performance.
@@ -97,7 +101,7 @@ pub struct GovernanceState {
 /// - **Efficient Bulk Operations**: Bitwise operations on multiple permissions
 /// - **Role Composition**: Complex roles built from atomic permission flags  
 /// - **Performance**: Single instruction permission checks vs multiple field comparisons
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Pod, Zeroable, Default, InitSpace)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Pod, Zeroable, Default, AnchorDeserialize, AnchorSerialize, InitSpace)]
 #[repr(transparent)]
 pub struct Permissions(u64);
 
