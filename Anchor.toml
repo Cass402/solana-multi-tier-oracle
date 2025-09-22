@@ -17,3 +17,17 @@ wallet = "~/.config/solana/id.json"
 
 [scripts]
 test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
+
+[test.validator]
+url = "http://127.0.0.1:8899"
+clone = [
+  { address = "8sLbNZoA1cfnvMJLPfp98ZLAnFSYCFApfJKMbiXNLwxj", account = true }, # Raydium SOL/USDC mainnet pool
+  { address = "3MsJXVvievxAbsMsaT6TS4i6oMitD9jazucuq3X234tC", account = true }, # Raydium SOL/USDC mainnet pool's observation account
+]
+args = [
+  "--reset",
+  "--rpc-port", "8899",
+  "--full-rpc-api",
+  "--limit-ledger-size", "0",
+  "--quiet"
+]

@@ -23,3 +23,6 @@ anchor-lang = "0.31.1"
 bytemuck = { version = "1.23", features = ["derive", "min_const_generics"] }
 ethnum = "1.5.2"
 
+[dev-dependencies]
+proptest = "1.7"
+
