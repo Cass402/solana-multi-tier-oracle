@@ -109,13 +109,9 @@ pub struct OracleState {
     /// accidental misconfiguration.
     pub asset_seed: [u8; 32],
 
-    /// Explicit padding to ensure deterministic struct layout.
-    /// Prevents compiler-dependent alignment issues across builds.
-    pub _padding: [u8; 1],
-
     /// Reserved space for future schema additions without breaking changes.
     /// Sized to accommodate common future fields while maintaining rent exemption.
-    pub reserved: [u64; 40],
+    pub reserved: [u8; 513],
 }
 
 /// Compact bitfield for oracle operational state management.
@@ -133,7 +129,7 @@ pub struct OracleState {
 /// 
 /// The transparent repr ensures zero-cost abstractions - compiled code operates
 /// directly on the underlying u32 without wrapper overhead.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Pod, Zeroable, Default, InitSpace)]
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, PartialEq, Eq, Pod, Zeroable, Default, InitSpace)]
 #[repr(transparent)]
 pub struct StateFlags(u32);
 
@@ -260,7 +256,7 @@ impl StateFlags {
 /// Enables backward-compatible account data migrations when program logic changes.
 /// The explicit padding ensures consistent struct layout across different architectures
 /// and compiler versions, preventing silent data corruption during upgrades.
-#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable, InitSpace)]
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, PartialEq, Pod, Zeroable, InitSpace)]
 #[repr(C)]
 pub struct Version {
     pub major: u8,
@@ -282,7 +278,7 @@ pub struct Version {
 /// 
 /// The explicit padding ensures deterministic memory layout, preventing subtle bugs
 /// when the same data is accessed from different program versions or architectures.
-#[derive(Clone, Copy, Debug, Pod, Zeroable, InitSpace, Default)]
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, Pod, Zeroable, InitSpace, Default)]
 #[repr(C)]
 pub struct PriceData {
     /// Price value in base units (scaled by 10^expo).
@@ -477,7 +473,7 @@ impl OracleState {
         let mut valid_count = 0usize;
         
         // Traverse recent chunks (up to 3 for 96-hour window support)
-        for chunk in historical_chunks.iter().take(3).rev() {
+        for chunk in historical_chunks.iter().take(3) {
             // Collect timestamps from this chunk's price points
             for i in 0..chunk.count as usize {
                 if valid_count >= valid_timestamps.len() {

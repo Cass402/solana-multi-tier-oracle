@@ -42,6 +42,36 @@ pub enum StateError {
     InvalidTimingParameters,
     #[msg("Invalid proposal threshold: must be > 0")]
     InvalidProposalThreshold,
+    #[msg("Too many price feeds registered")]
+    TooManyFeeds,
+    #[msg("Circuit breaker is currently active")]
+    CircuitBreakerActive,
+    #[msg("Invalid source address: cannot be default")]
+    InvalidSourceAddress,
+    #[msg("Unauthorized feed registration")]
+    UnauthorizedFeedRegistration,
+    #[msg("Invalid feed weight: must be > 0 and <= MAX_FEED_WEIGHT")]
+    InvalidFeedWeight,
+    #[msg("Total weight would exceed maximum allowed")]
+    ExcessiveTotalWeight,
+    #[msg("Duplicate feed source address")]
+    DuplicateFeedSource,
+    #[msg("Insufficient source liquidity")]
+    InsufficientSourceLiquidity,
+    #[msg("External oracle staleness threshold too high")]
+    ExcessiveExternalStaleness,
+    #[msg("TWAP Calculation Error: Not Enough History")]
+    NotEnoughHistory,
+    #[msg("Invalid Account due to owner mismatch")]
+    InvalidAccount,
+    #[msg("No active price feeds available")]
+    NoActiveFeeds,
+    #[msg("Low confidence in the fetched prices")]
+    LowConfidence,
+    #[msg("Mismatched price exponents in TWAP calculation")]
+    MismatchedExponent,
+    #[msg("Non-monotonic timestamps detected in price data")]
+    NonMonotonicTimestamps,
 }
 
 #[error_code]
@@ -68,4 +98,8 @@ pub enum RaydiumObserverError {
     MathError,
     #[msg("Raydium CLMM Observer: Excessive tick deviation")]
     ExcessiveDeviation,
+    #[msg("Update Price Instruction: Invalid Observation PDA")]
+    InvalidObservationPda,
+    #[msg("Update Price Instruction: Invalid TWAP price fetched")]
+    InvalidPrice,
 }

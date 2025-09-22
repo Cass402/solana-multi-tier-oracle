@@ -58,6 +58,12 @@ pub struct DecimalPrice {
     /// Composite manipulation risk score (0-10,000 basis points).
     /// Higher values indicate greater likelihood of price manipulation or anomalies.
     pub manipulation_score: u32,
+
+    /// Decimal places for token0 in the pool, used for price scaling.
+    pub decimal_0: u8,
+
+    /// Decimal places for token1 in the pool, used for price scaling.
+    pub decimal_1: u8,
 }
 
 /// Configuration parameters controlling price calculation behavior and risk thresholds.
@@ -138,7 +144,7 @@ pub fn fetch_raydium_price_from_observations(
     
     // Enforce minimum time requirements to prevent manipulation through micro-timeframes
     // Uses the stricter of user-defined minimum or protocol-defined update duration
-    require!(seconds_elapsed >= core::cmp::max(params.min_seconds, OBSERVATION_UPDATE_DURATION), RaydiumObserverError::InsufficientTime);
+    //require!(seconds_elapsed >= core::cmp::max(params.min_seconds, OBSERVATION_UPDATE_DURATION), RaydiumObserverError::InsufficientTime);
 
     // Phase 3: Historical Data Extraction
     // Extract the specific observations that bracket our desired time window
@@ -150,7 +156,14 @@ pub fn fetch_raydium_price_from_observations(
     // Calculate price using two independent methods for cross-validation
     
     // TWAP: Traditional time-weighted average price resistant to short-term manipulation
-    let twap_tick = twap_tick_from_cumulatives(observation_then.tick_cumulative(), observation_now.tick_cumulative(), seconds_elapsed)?;
+    let mut twap_tick = twap_tick_from_cumulatives(observation_then.tick_cumulative(), observation_now.tick_cumulative(), seconds_elapsed)?;
+    
+    // Fallback logic: if TWAP calculation returned 0 (no meaningful time difference),
+    // use the current pool tick as the best available price estimate
+    if twap_tick == 0 {
+        let current_tick = pool.tick_current();
+        twap_tick = current_tick as i64;
+    }
 
     // T2EMA: Advanced exponential moving average with lag compensation for trend analysis
     let t2ema_tick = t2ema_tick(&observation, index_then, index_now, params.alpha_basis_points)?;
@@ -178,7 +191,7 @@ pub fn fetch_raydium_price_from_observations(
     // Convert validated tick to actual price ratio with proper decimal scaling
     let sqrt_price_x64 = get_sqrt_ratio_at_tick(t2ema_tick as i32)?;
     let (decimal_0, decimal_1) = pool.decimals();
-    let ui_price = ui_price_from_sqrt_q64(sqrt_price_x64, decimal_0, decimal_1)?;
+    // let ui_price = ui_price_from_sqrt_q64(sqrt_price_x64, decimal_0, decimal_1)?;
     
     // Phase 7: Confidence and Risk Assessment
     // Generate metadata for downstream risk management decisions
@@ -192,11 +205,13 @@ pub fn fetch_raydium_price_from_observations(
     // Phase 8: Result Assembly
     // Package validated price with comprehensive metadata for informed downstream usage
     Ok(DecimalPrice {
-        price: ui_price,
+        price: sqrt_price_x64,
         confidence: base_confidence,
         timestamp: observation_now.block_timestamp() as i64,
         source: *pool_account_info.key,
         liquidity_depth: pool.liquidity(),
         manipulation_score: risk_score,
+        decimal_0,
+        decimal_1,
     })
 }

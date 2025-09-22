@@ -70,13 +70,10 @@ pub struct HistoricalChunk {
 
     /// Bump seed used for PDA derivation of this account.
     pub bump: u8,
-
-    /// Explicit padding to ensure deterministic memory layout across architectures
-    pub _padding: [u8; 7],
     
     /// Reserved space for future schema evolution without breaking changes.
     /// Prevents need for complex data migration when adding new functionality.
-    pub reserved: [u64; 40],
+    pub reserved: [u8; 511],
 }
 
 /// Individual price data point optimized for historical storage and analysis.
@@ -108,8 +105,8 @@ pub struct HistoricalChunk {
 /// - Timestamp: Enables temporal analysis and time-weighted calculations
 /// - Volume: Critical for detecting manipulation patterns and market health metrics
 /// - Padding: Prevents subtle alignment bugs that could corrupt historical data
-#[derive(Clone, Copy, Debug, Pod, Zeroable, InitSpace, Default)]
-#[repr(C, packed)]
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, Pod, Zeroable, InitSpace, Default)]
+#[repr(C)]
 pub struct PricePoint {
     /// Price value in scaled integer format (apply expo for decimal representation).
     /// Signed to accommodate negative values for derivatives and spread instruments.
@@ -126,10 +123,6 @@ pub struct PricePoint {
     /// Unix timestamp when this price point was recorded.
     /// Essential for temporal analysis and time-weighted average calculations.
     pub timestamp: i64,
-    
-    /// Base-10 exponent for price scaling (e.g., -6 for microunits).
-    /// Maintains consistency with real-time price representation standards.
-    pub expo: i32,
 }
 
 impl HistoricalChunk {

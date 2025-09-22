@@ -19,7 +19,7 @@ use bytemuck::{Pod, Zeroable};
 /// 
 /// The struct layout orders fields by access frequency to optimize cache performance
 /// during price aggregation operations, which are the most compute-intensive workload.
-#[derive(Clone, Copy, Debug, Pod, Zeroable, InitSpace, Default)]
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, Pod, Zeroable, InitSpace, Default)]
 #[repr(C)]
 pub struct PriceFeed {
     /// Unique identifier for the price data source.
@@ -112,7 +112,7 @@ impl PriceFeed {
 /// - **Efficient Bulk Operations**: Bitwise operations on multiple feeds in parallel
 /// - **Extensibility**: New quality indicators can be added without schema migration
 /// - **Performance**: Single instruction flag checks vs multiple field comparisons
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Pod, Zeroable, Default, InitSpace)]
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, PartialEq, Eq, Pod, Zeroable, Default, InitSpace)]
 #[repr(transparent)]
 pub struct FeedFlags(u8);
 
@@ -241,7 +241,7 @@ impl FeedFlags {
 /// The u8 representation minimizes storage overhead while providing sufficient
 /// extensibility for future source types. Explicit discriminant values ensure
 /// stable serialization across program versions.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, AnchorSerialize, AnchorDeserialize)]
 #[repr(u8)]
 pub enum SourceType {
     /// Decentralized exchange (e.g., Uniswap, Serum)

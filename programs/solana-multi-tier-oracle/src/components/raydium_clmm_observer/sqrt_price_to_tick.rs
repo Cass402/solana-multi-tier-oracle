@@ -249,7 +249,7 @@ pub fn ui_price_from_sqrt_q64(sqrt_price_x64: u128, decimal_0: u8, decimal_1: u8
         
         // Scale up: token0 has more decimals than token1
         // Multiply by 10^difference to adjust for decimal disparity
-        1..=18 => multiply_q64(price, POW10_LOOKUP[decimal_difference as usize])?,
+        1..=18 => price.saturating_mul(POW10_LOOKUP[decimal_difference as usize]),
         
         // Scale down: token1 has more decimals than token0
         // Divide by 10^|difference| with rounding for accuracy

@@ -9,6 +9,16 @@ pub const MAX_CONFIDENCE_THRESHOLD: u16 = 10_000; // 100% in basis points
 pub const MAX_MANIPULATION_THRESHOLD: u16 = 10_000; // 100% in basis points
 pub const MAX_QUORUM_THRESHOLD: u16 = 10_000; // 100% in basis points
 pub const DEFAULT_VETO_PERIOD: i64 = 86400; // 24 hours in seconds
+pub const MAX_ALLOWED_PROGRAMS: usize = 8; // max allowed DEX and aggregator programs (DEX or aggregator cannot dominate more than 50% of total price feeds allowed to ensure decentralization)
+pub const MIN_HISTORICAL_INTERVAL: i64 = 900; // minimum interval between historical snapshots (15 minutes)
+
+/// Price feed constants
+pub const MAX_FEED_WEIGHT: u16 = 10_000; // Maximum weight per feed in basis points
+pub const WEIGHT_PRECISION: u32 = 10_000; // Total weight precision (basis points)
+pub const MIN_CLMM_LIQUIDITY: u64 = 100_000; // Minimum liquidity for CLMM sources
+pub const MIN_AMM_LIQUIDITY: u64 = 50_000; // Minimum liquidity for AMM sources  
+pub const MAX_EXTERNAL_STALENESS: u32 = 300; // Maximum staleness for external oracles (5 minutes)
+pub const ESTIMATED_CU_PER_FEED: u32 = 2_000; // Estimated compute units per feed processing
 
 /// Snapshot tracking constants for redemption quality control
 /// (leverages existing HistoricalChunk infrastructure)

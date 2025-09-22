@@ -1,4 +1,4 @@
-use crate::utils::constants::MAX_MULTISIG_MEMBERS;
+use crate::utils::constants::{MAX_MULTISIG_MEMBERS, MAX_ALLOWED_PROGRAMS};
 use crate::error::StateError;
 use anchor_lang::prelude::*;
 use bytemuck::{Pod, Zeroable};
@@ -66,10 +66,16 @@ pub struct GovernanceState {
     /// PDA bump seed for deterministic governance account derivation.
     /// Cached to avoid recomputation during frequent governance checks.
     pub bump: u8,
+
+    pub strict_mode_enabled: u8,
+
+    pub allowed_dex_program_count: u8,
     
-    /// Explicit padding ensures deterministic struct layout.
-    /// Critical for governance data integrity across deployment environments.
-    pub _padding1: [u8; 3],
+    pub allowed_aggregator_program_count: u8,
+
+    pub allowed_dex_programs: [Pubkey; MAX_ALLOWED_PROGRAMS],
+    
+    pub allowed_aggregator_programs: [Pubkey; MAX_ALLOWED_PROGRAMS],
 
     /// Public key of the associated oracle state account.
     /// Facilitates cross-account integrity checks and operations.
@@ -85,7 +91,7 @@ pub struct GovernanceState {
     
     /// Reserved space for future governance features without breaking changes.
     /// Sized to accommodate common governance extensions while maintaining rent exemption.
-    pub reserved: [u64; 40],
+    pub reserved: [u8; 512],
 }
 
 /// Compact bitfield for governance permission flags with zero-copy performance.

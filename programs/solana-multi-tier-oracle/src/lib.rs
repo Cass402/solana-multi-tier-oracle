@@ -7,17 +7,24 @@ pub mod state;
 pub mod components;
 pub mod instructions;
 
-declare_id!("4CLGL8iE73T7Wcwjt3q2XapX22iSxPpXFpYGhZ33yc9h");
+use instructions::*;
+
+
+declare_id!("4CVNsAY1CA9nANqBGJ4BBJAcUvPR2eTbidLu3nMewPad");
 
 #[program]
 pub mod solana_multi_tier_oracle {
     use super::*;
 
-    pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
-        msg!("Greetings from: {:?}", ctx.program_id);
-        Ok(())
+    pub fn initialize_oracle(ctx: Context<InitializeOracle>, config: OracleConfig) -> Result<()> {
+        instructions::initialize_oracle::initialize_oracle(ctx, config)
+    }
+
+    pub fn register_price_feed(ctx: Context<RegisterPriceFeed>, feed_config: PriceFeedConfig) -> Result<()> {
+        instructions::register_price_feed::register_price_feed(ctx, feed_config)
+    }
+
+    pub fn update_price(ctx: Context<UpdatePrice>, config: UpdatePriceConfig) -> Result<()> {
+        instructions::update_price::update_price(ctx, config)
     }
 }
-
-#[derive(Accounts)]
-pub struct Initialize {}
