@@ -588,13 +588,119 @@ describe("Price Update Integration Tests (mainnet clone)", () => {
         commitment: "confirmed",
         maxSupportedTransactionVersion: 0,
       });
+      // Helper to print a detailed CU report
+      const printCuReport = (opts: {
+        txSig?: string;
+        cu?: number;
+        feeLamports?: number;
+        logs?: string[];
+      }) => {
+        const cu = opts.cu ?? 0;
+        const feeLamports = opts.feeLamports ?? 0;
+        const feeSol = feeLamports / 1_000_000_000;
+        const logs = opts.logs ?? [];
+        const cuLines = logs.filter((l) =>
+          /consumed .* compute units/i.test(l)
+        );
+        let limit: number | undefined;
+        let consumedFromLog: number | undefined;
+        const summaryRegex = /consumed\s+(\d+)\s+of\s+(\d+)\s+compute units/i;
+        for (const line of cuLines) {
+          const m = line.match(summaryRegex);
+          if (m) {
+            consumedFromLog = Number(m[1]);
+            limit = Number(m[2]);
+          }
+        }
+        console.log("=== Compute Unit Report ===");
+        if (opts.txSig) console.log(`Tx: ${opts.txSig}`);
+        console.log(`CU: ${cu.toLocaleString()} units`);
+        if (consumedFromLog !== undefined) {
+          const pct = limit
+            ? ((consumedFromLog / limit) * 100).toFixed(2)
+            : undefined;
+          console.log(
+            `CU (logs): ${consumedFromLog.toLocaleString()}${
+              limit ? ` / ${limit.toLocaleString()} (${pct}%)` : ""
+            }`
+          );
+        }
+        if (cuLines.length > 0) {
+          console.log("CU breakdown (per program invocation):");
+          cuLines.forEach((l) => console.log(`  • ${l}`));
+        }
+        console.log(`Fee: ${feeLamports} lamports (${feeSol} SOL)`);
+        console.log("============================\n");
+      };
 
-      if (txDetails?.meta) {
-        const cu = txDetails.meta.computeUnitsConsumed ?? 0;
-        const fee = txDetails.meta.fee ?? 0;
-        console.log(`CU: ${cu}, fee: ${fee}`);
-        expect(cu).to.be.greaterThan(0);
-        expect(cu).to.be.lessThan(300_000); // a soft upper bound
+      // Try to wait briefly for meta/logs to be available
+      let details = txDetails;
+      for (
+        let i = 0;
+        i < 5 && (!details?.meta || !details.meta.logMessages);
+        i++
+      ) {
+        await sleep(250);
+        details = await provider.connection.getTransaction(tx, {
+          commitment: "confirmed",
+          maxSupportedTransactionVersion: 0,
+        });
+      }
+
+      let cuForAssert: number | undefined;
+
+      if (details?.meta) {
+        cuForAssert = details.meta.computeUnitsConsumed ?? undefined;
+        printCuReport({
+          txSig: tx,
+          cu: details.meta.computeUnitsConsumed ?? 0,
+          feeLamports: details.meta.fee ?? 0,
+          logs: details.meta.logMessages ?? [],
+        });
+      } else {
+        // Fallback: simulate the same instruction to obtain unitsConsumed/logs
+        try {
+          const ix = await program.methods
+            .updatePrice(updateConfig)
+            .accounts({
+              oracleState: oracleAccounts.oracle,
+              governanceState: oracleAccounts.governance,
+              historicalChunk0: oracleAccounts.historicalChunk0,
+              historicalChunk1: oracleAccounts.historicalChunk1,
+              historicalChunk2: oracleAccounts.historicalChunk2,
+              raydiumPool,
+              raydiumObservation,
+              authority: authority.publicKey,
+            })
+            .instruction();
+
+          const { blockhash } = await provider.connection.getLatestBlockhash();
+          const simTx = new anchor.web3.Transaction({
+            feePayer: authority.publicKey,
+            recentBlockhash: blockhash,
+          }).add(ix);
+
+          const sim = await provider.connection.simulateTransaction(simTx, {
+            sigVerify: false,
+            replaceRecentBlockhash: true,
+            commitment: "processed",
+          } as any);
+
+          const units = (sim.value as any)?.unitsConsumed ?? 0;
+          cuForAssert = units;
+          printCuReport({
+            cu: units,
+            logs: sim.value?.logs ?? [],
+            feeLamports: 0,
+          });
+        } catch (e) {
+          console.warn("CU simulation fallback failed:", e);
+        }
+      }
+
+      if (typeof cuForAssert === "number") {
+        expect(cuForAssert).to.be.greaterThan(0);
+        expect(cuForAssert).to.be.lessThan(300_000); // a soft upper bound
       }
     });
   });
