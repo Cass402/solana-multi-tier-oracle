@@ -1,7 +1,7 @@
 /// State constants
 pub const MAX_PRICE_FEEDS: usize = 16; // power of 2 for cache alignment
 pub const BUFFER_SIZE: usize = 128; // power of 2 for efficiency
-pub const MAX_HISTORICAL_CHUNKS: usize = 8; 
+pub const MAX_HISTORICAL_CHUNKS: usize = 8;
 pub const MAX_LP_CONCENTRATION: u16 = 3_000; // 30%
 pub const MAX_MULTISIG_MEMBERS: usize = 16;
 pub const MAX_TWAP_WINDOW: u32 = 345_600; // 96 hours in seconds
@@ -16,7 +16,7 @@ pub const MIN_HISTORICAL_INTERVAL: i64 = 900; // minimum interval between histor
 pub const MAX_FEED_WEIGHT: u16 = 10_000; // Maximum weight per feed in basis points
 pub const WEIGHT_PRECISION: u32 = 10_000; // Total weight precision (basis points)
 pub const MIN_CLMM_LIQUIDITY: u64 = 100_000; // Minimum liquidity for CLMM sources
-pub const MIN_AMM_LIQUIDITY: u64 = 50_000; // Minimum liquidity for AMM sources  
+pub const MIN_AMM_LIQUIDITY: u64 = 50_000; // Minimum liquidity for AMM sources
 pub const MAX_EXTERNAL_STALENESS: u32 = 300; // Maximum staleness for external oracles (5 minutes)
 pub const ESTIMATED_CU_PER_FEED: u32 = 2_000; // Estimated compute units per feed processing
 
@@ -25,7 +25,7 @@ pub const ESTIMATED_CU_PER_FEED: u32 = 2_000; // Estimated compute units per fee
 pub const MIN_SNAPSHOTS_24H: u16 = 12; // minimum snapshots required in 24 hours (kept for backward compatibility)
 pub const MIN_TIME_SPAN_HOURS: u16 = 24; // minimum time coverage in hours (increased for safety)
 pub const MAX_SNAPSHOTS_PER_HOUR: u16 = 4; // allow 4 per hour (matches 15-min intervals)
-pub const MAX_HOURS: u16 = 96; 
+pub const MAX_HOURS: u16 = 96;
 pub const SECONDS_PER_HOUR: i64 = 3600;
 pub const SECONDS_PER_24H: i64 = 86400;
 pub const SECONDS_PER_72H: i64 = 259200; // 72 hours for TWAP validation

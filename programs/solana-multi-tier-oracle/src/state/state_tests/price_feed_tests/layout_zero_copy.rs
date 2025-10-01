@@ -21,25 +21,49 @@ fn price_feed_struct_layout_invariants() {
     // The exact size is part of the on-chain storage contract. If this
     // assertion fails, revisit account sizing, rent calculations and any
     // client-side assumptions about byte offsets.
-    assert_eq!(size_of::<PriceFeed>(), 112, "repr(C) layout changed: check account sizing");
+    assert_eq!(
+        size_of::<PriceFeed>(),
+        112,
+        "repr(C) layout changed: check account sizing"
+    );
 
     // `i128` fields or types that want 16-byte alignment force the overall
     // struct alignment. Misalignment can create UB when transmuting or
     // performing raw pointer casts during zero-copy reads.
-    assert_eq!(align_of::<PriceFeed>(), 16, "expected 16-byte alignment due to i128 fields");
+    assert_eq!(
+        align_of::<PriceFeed>(),
+        16,
+        "expected 16-byte alignment due to i128 fields"
+    );
 
     // FeedFlags is deliberately a compact single-byte bitfield to minimize
     // account size and enable atomic updates via read-modify-write. If this
     // changes, re-evaluate bitpacking, storage cost, and all accessor helpers.
-    assert_eq!(size_of::<FeedFlags>(), 1, "FeedFlags should stay a single byte bitfield");
-    assert_eq!(align_of::<FeedFlags>(), 1, "FeedFlags alignment drifted—breaks zero-copy bitfield assumptions");
+    assert_eq!(
+        size_of::<FeedFlags>(),
+        1,
+        "FeedFlags should stay a single byte bitfield"
+    );
+    assert_eq!(
+        align_of::<FeedFlags>(),
+        1,
+        "FeedFlags alignment drifted—breaks zero-copy bitfield assumptions"
+    );
 
     // Enum discriminants must remain byte-sized; many on-chain encodings and
     // cross-program consumers assume 1-byte discriminants for compactness and
     // stable ABI. Changing this increases account size and breaks
     // cross-version compatibility.
-    assert_eq!(size_of::<SourceType>(), 1, "SourceType discriminants must remain 1 byte");
-    assert_eq!(align_of::<SourceType>(), 1, "SourceType alignment must stay byte-addressable");
+    assert_eq!(
+        size_of::<SourceType>(),
+        1,
+        "SourceType discriminants must remain 1 byte"
+    );
+    assert_eq!(
+        align_of::<SourceType>(),
+        1,
+        "SourceType alignment must stay byte-addressable"
+    );
 }
 
 /// Verify bytemuck trait constraints required for safe, constant-time
@@ -88,7 +112,10 @@ fn padding_bytes_remain_zero() {
 
     // The in-memory `_padding` array is part of the deterministic layout and
     // must remain zero after arbitrary, legitimate updates to live fields.
-    assert!(feed._padding.iter().all(|byte| *byte == 0), "padding mutated—violates deterministic layout");
+    assert!(
+        feed._padding.iter().all(|byte| *byte == 0),
+        "padding mutated—violates deterministic layout"
+    );
 
     // Serialize to bytes via `bytemuck::bytes_of` and ensure the serialized
     // image does not leak non-zero values from padding. This mirrors the
@@ -96,5 +123,8 @@ fn padding_bytes_remain_zero() {
     // structs directly.
     let raw = bytes_of(&feed);
     let padding_slice = &raw[raw.len() - feed._padding.len()..];
-    assert!(padding_slice.iter().all(|byte| *byte == 0), "serialized padding leaked non-zero data");
+    assert!(
+        padding_slice.iter().all(|byte| *byte == 0),
+        "serialized padding leaked non-zero data"
+    );
 }

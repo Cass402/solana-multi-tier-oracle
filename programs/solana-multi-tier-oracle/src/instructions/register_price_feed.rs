@@ -1,10 +1,13 @@
-use anchor_lang::prelude::*;
 use crate::error::StateError;
-use crate::state::oracle_state::OracleState;
-use crate::state::price_feed::{PriceFeed, FeedFlags, SourceType};
 use crate::state::governance_state::{GovernanceState, Permissions};
-use crate::utils::constants::{ORACLE_STATE_SEED, GOVERNANCE_SEED, MAX_FEED_WEIGHT, MIN_CLMM_LIQUIDITY, MIN_AMM_LIQUIDITY, MAX_PRICE_FEEDS, WEIGHT_PRECISION};
+use crate::state::oracle_state::OracleState;
+use crate::state::price_feed::{FeedFlags, PriceFeed, SourceType};
+use crate::utils::constants::{
+    GOVERNANCE_SEED, MAX_FEED_WEIGHT, MAX_PRICE_FEEDS, MIN_AMM_LIQUIDITY, MIN_CLMM_LIQUIDITY,
+    ORACLE_STATE_SEED, WEIGHT_PRECISION,
+};
 use crate::utils::events::PriceFeedRegistered;
+use anchor_lang::prelude::*;
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
 pub struct PriceFeedConfig {
@@ -31,13 +34,19 @@ impl ValidationResult {
     //const ERROR_STALENESS_OUT_OF_RANGE: u8 = 1 << 5;
 
     fn success() -> Self {
-        Self { is_valid: true, error_flags: 0 }
+        Self {
+            is_valid: true,
+            error_flags: 0,
+        }
     }
 
     fn with_error(error_flag: u8) -> Self {
-        Self { is_valid: false, error_flags: error_flag }
+        Self {
+            is_valid: false,
+            error_flags: error_flag,
+        }
     }
-    
+
     fn add_error(&mut self, error_flag: u8) {
         self.is_valid = false;
         self.error_flags |= error_flag;
@@ -56,20 +65,16 @@ impl PriceFeedConfig {
     fn validate_source_address(&self) -> ValidationResult {
         match self.source_type {
             SourceType::DEX => {
-                if self.min_liquidity < MIN_CLMM_LIQUIDITY as u128{
+                if self.min_liquidity < MIN_CLMM_LIQUIDITY as u128 {
                     ValidationResult::with_error(ValidationResult::ERROR_INSUFFICIENT_LIQUIDITY)
                 } else {
                     ValidationResult::success()
                 }
-            },
+            }
 
-            SourceType::CEX => {
-                ValidationResult::success()
-            },
+            SourceType::CEX => ValidationResult::success(),
 
-            SourceType::Oracle => {
-                ValidationResult::success()
-            },
+            SourceType::Oracle => ValidationResult::success(),
 
             SourceType::Aggregator => {
                 if self.min_liquidity < MIN_AMM_LIQUIDITY as u128 {
@@ -77,7 +82,7 @@ impl PriceFeedConfig {
                 } else {
                     ValidationResult::success()
                 }
-            },
+            }
         }
     }
 }
@@ -90,12 +95,14 @@ struct ValidationContext<'a> {
 
 impl<'a> ValidationContext<'a> {
     fn new(oracle_state: &'a OracleState) -> Result<Self> {
-        let current_total_weight = oracle_state.active_feeds()
-            .iter()
-            .try_fold(0u32, |acc, feed| {
-                acc.checked_add(feed.weight as u32)
-                .ok_or(StateError::ExcessiveTotalWeight)
-            })?;
+        let current_total_weight =
+            oracle_state
+                .active_feeds()
+                .iter()
+                .try_fold(0u32, |acc, feed| {
+                    acc.checked_add(feed.weight as u32)
+                        .ok_or(StateError::ExcessiveTotalWeight)
+                })?;
 
         Ok(Self {
             oracle_state,
@@ -117,18 +124,22 @@ impl<'a> ValidationContext<'a> {
     }
 
     fn has_duplicate_source(&self, source_address: &Pubkey) -> bool {
-        self.oracle_state.active_feeds()
+        self.oracle_state
+            .active_feeds()
             .iter()
             .any(|feed| &feed.source_address == source_address)
     }
 
     fn validate_total_weight(&self, new_weight: u16) -> Result<ValidationResult> {
-        let new_total_weight = self.current_total_weight
+        let new_total_weight = self
+            .current_total_weight
             .checked_add(new_weight as u32)
             .ok_or(StateError::ExcessiveTotalWeight)?;
 
         if new_total_weight > WEIGHT_PRECISION {
-            Ok(ValidationResult::with_error(ValidationResult::ERROR_EXCESSIVE_WEIGHT))
+            Ok(ValidationResult::with_error(
+                ValidationResult::ERROR_EXCESSIVE_WEIGHT,
+            ))
         } else {
             Ok(ValidationResult::success())
         }
@@ -162,39 +173,45 @@ fn validate_source_program_ownership(
         SourceType::DEX | SourceType::CEX => {
             if governance_state.strict_mode_enabled == 1 {
                 let owner = *feed_source.owner;
-                let is_allowed = governance_state.allowed_dex_programs
+                let is_allowed = governance_state
+                    .allowed_dex_programs
                     .iter()
                     .take(governance_state.allowed_dex_program_count as usize)
                     .any(|&program| program == owner);
 
                 if !is_allowed {
                     msg!("Unauthorized DEX/CEX program: {}", owner);
-                    return ValidationResult::with_error(ValidationResult::ERROR_UNAUTHORIZED_PROGRAM);
+                    return ValidationResult::with_error(
+                        ValidationResult::ERROR_UNAUTHORIZED_PROGRAM,
+                    );
                 }
             }
             ValidationResult::success()
-        },
+        }
 
         SourceType::Aggregator => {
             if governance_state.strict_mode_enabled == 1 {
                 let owner = *feed_source.owner;
-                let is_allowed = governance_state.allowed_aggregator_programs
+                let is_allowed = governance_state
+                    .allowed_aggregator_programs
                     .iter()
                     .take(governance_state.allowed_aggregator_program_count as usize)
                     .any(|&program| program == owner);
 
                 if !is_allowed {
                     msg!("Unauthorized Aggregator program: {}", owner);
-                    return ValidationResult::with_error(ValidationResult::ERROR_UNAUTHORIZED_PROGRAM);
+                    return ValidationResult::with_error(
+                        ValidationResult::ERROR_UNAUTHORIZED_PROGRAM,
+                    );
                 }
             }
             ValidationResult::success()
-        },
+        }
 
         SourceType::Oracle => {
             // Oracles are not implemented yet, so skip validation for now
             ValidationResult::success()
-        },
+        }
     }
 }
 
@@ -223,7 +240,8 @@ fn validate_feed_registration(
         return Err(convert_validation_error(source_result.error_flags).into());
     }
 
-    let program_result = validate_source_program_ownership(feed_source, feed_config.source_type, governance_state);
+    let program_result =
+        validate_source_program_ownership(feed_source, feed_config.source_type, governance_state);
     if !program_result.is_valid {
         return Err(convert_validation_error(program_result.error_flags).into());
     }
@@ -297,18 +315,25 @@ pub fn register_price_feed(
 
     validation_context.validate_oracle_constraints()?;
 
-    governance_state.check_member_permission(&ctx.accounts.authority.key(), Permissions::ADD_FEED)?;
+    governance_state
+        .check_member_permission(&ctx.accounts.authority.key(), Permissions::ADD_FEED)?;
 
-    validate_feed_registration(&validation_context, &feed_config, &ctx.accounts.feed_source, &governance_state)?;
+    validate_feed_registration(
+        &validation_context,
+        &feed_config,
+        &ctx.accounts.feed_source,
+        &governance_state,
+    )?;
 
-    let final_total_weight = validation_context.current_total_weight
+    let final_total_weight = validation_context
+        .current_total_weight
         .checked_add(feed_config.weight as u32)
         .ok_or(StateError::ExcessiveTotalWeight)?;
 
     let active_feed_count = oracle_state.active_feed_count;
     let feed_index = oracle_state.active_feed_count as usize;
     oracle_state.price_feeds[feed_index] = create_price_feed(&feed_config, timestamp_now);
-    oracle_state.set_active_feed_count(active_feed_count+1)?;
+    oracle_state.set_active_feed_count(active_feed_count + 1)?;
 
     emit!(PriceFeedRegistered {
         oracle: ctx.accounts.oracle_state.key(),

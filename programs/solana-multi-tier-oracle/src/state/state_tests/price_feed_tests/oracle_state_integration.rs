@@ -14,7 +14,12 @@ fn oracle_state_with_feeds(feeds: &[PriceFeed], manipulation_threshold: u16) -> 
 
     OracleState {
         authority: Pubkey::new_unique(),
-        version: Version { major: 1, minor: 0, patch: 0, _padding: 0 },
+        version: Version {
+            major: 1,
+            minor: 0,
+            patch: 0,
+            _padding: 0,
+        },
         flags: StateFlags::default(),
         last_update: 0,
         current_price: PriceData::default(),
@@ -42,10 +47,9 @@ fn assert_error_code(result: Result<(), Error>, expected: StateError) {
     let err = result.expect_err("expected oracle manipulation check to fail");
     let expected_error: Error = expected.into();
 
-    let actual_code = error_code_number(&err)
-        .expect("expected anchor error with code");
-    let expected_code = error_code_number(&expected_error)
-        .expect("expected anchor error with code");
+    let actual_code = error_code_number(&err).expect("expected anchor error with code");
+    let expected_code =
+        error_code_number(&expected_error).expect("expected anchor error with code");
 
     // Comparing numeric codes guards against fragile string comparisons and
     // exercises the same path Anchor runtime would use to surface the error
@@ -81,7 +85,7 @@ fn inactive_feeds_are_skipped_by_manipulation_checks() {
     let mut feed = sample_price_feed();
     feed.lp_concentration = MAX_LP_CONCENTRATION + 500;
 
-    let state = oracle_state_with_feeds(&[feed], /*manipulation_threshold=*/500);
+    let state = oracle_state_with_feeds(&[feed], /*manipulation_threshold=*/ 500);
     assert!(state.check_manipulation_resistance().is_ok());
 }
 
@@ -95,7 +99,7 @@ fn active_feed_fails_on_excessive_lp_concentration() {
     feed.flags.set(FeedFlags::ACTIVE);
     feed.lp_concentration = MAX_LP_CONCENTRATION + 1;
 
-    let state = oracle_state_with_feeds(&[feed], /*manipulation_threshold=*/1_000);
+    let state = oracle_state_with_feeds(&[feed], /*manipulation_threshold=*/ 1_000);
     assert_error_code(
         state.check_manipulation_resistance(),
         StateError::ExcessiveLpConcentration,
@@ -111,7 +115,7 @@ fn active_feed_detects_manipulation_score_violation() {
     feed.flags.set(FeedFlags::ACTIVE);
     feed.manipulation_score = 1_200;
 
-    let state = oracle_state_with_feeds(&[feed], /*manipulation_threshold=*/1_000);
+    let state = oracle_state_with_feeds(&[feed], /*manipulation_threshold=*/ 1_000);
     assert_error_code(
         state.check_manipulation_resistance(),
         StateError::ManipulationDetected,
@@ -133,6 +137,9 @@ fn mixed_feed_activation_only_checks_active_entries() {
     risky_inactive.manipulation_score = 5_000;
 
     // Place risky feed second to ensure ordering doesn't matter.
-    let state = oracle_state_with_feeds(&[clean_active, risky_inactive], /*manipulation_threshold=*/200);
+    let state = oracle_state_with_feeds(
+        &[clean_active, risky_inactive],
+        /*manipulation_threshold=*/ 200,
+    );
     assert!(state.check_manipulation_resistance().is_ok());
 }

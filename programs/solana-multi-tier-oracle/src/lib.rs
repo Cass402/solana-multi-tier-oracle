@@ -1,14 +1,13 @@
 #![allow(unexpected_cfgs)]
 use anchor_lang::prelude::*;
 
-pub mod error;
-pub mod utils;
-pub mod state;
 pub mod components;
+pub mod error;
 pub mod instructions;
+pub mod state;
+pub mod utils;
 
 use instructions::*;
-
 
 declare_id!("4CVNsAY1CA9nANqBGJ4BBJAcUvPR2eTbidLu3nMewPad");
 
@@ -20,7 +19,10 @@ pub mod solana_multi_tier_oracle {
         instructions::initialize_oracle::initialize_oracle(ctx, config)
     }
 
-    pub fn register_price_feed(ctx: Context<RegisterPriceFeed>, feed_config: PriceFeedConfig) -> Result<()> {
+    pub fn register_price_feed(
+        ctx: Context<RegisterPriceFeed>,
+        feed_config: PriceFeedConfig,
+    ) -> Result<()> {
         instructions::register_price_feed::register_price_feed(ctx, feed_config)
     }
 

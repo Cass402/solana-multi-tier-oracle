@@ -1,5 +1,5 @@
-use anchor_lang::prelude::*;
 use crate::state::price_feed::SourceType;
+use anchor_lang::prelude::*;
 
 #[event]
 pub struct OracleInitialized {

@@ -1,12 +1,14 @@
-use anchor_lang::prelude::*;
-use crate::error::RaydiumObserverError;
 use crate::components::raydium_clmm_observer::raydium_accounts::ObservationReader;
-use crate::components::raydium_clmm_observer::raydium_constants::{OBSERVATION_UPDATE_DURATION, OBSERVATION_NUM, MIN_TICK, MAX_TICK};
+use crate::components::raydium_clmm_observer::raydium_constants::{
+    MAX_TICK, MIN_TICK, OBSERVATION_NUM, OBSERVATION_UPDATE_DURATION,
+};
+use crate::error::RaydiumObserverError;
+use anchor_lang::prelude::*;
 
 /// Fixed-point arithmetic configuration for TWAP calculations.
-/// 
+///
 /// # Fixed-Point Design Rationale
-/// 
+///
 /// Using 32-bit fractional precision provides sufficient accuracy for financial calculations
 /// while maintaining computational efficiency within Solana's compute unit constraints.
 /// This precision level prevents accumulation of rounding errors during iterative EMA
@@ -15,9 +17,9 @@ const FP_SHIFT: i32 = 32;
 const FP_ONE: i128 = 1i128 << FP_SHIFT;
 
 /// Convert integer to fixed-point representation for precise arithmetic operations.
-/// 
+///
 /// # Precision Strategy
-/// 
+///
 /// Inline optimization ensures this conversion has zero overhead while the fixed-point
 /// representation prevents floating-point precision issues that could compound during
 /// iterative calculations, particularly important for financial applications where
@@ -28,9 +30,9 @@ fn to_fp(value: i64) -> i128 {
 }
 
 /// Multiply two fixed-point numbers maintaining precision through intermediate scaling.
-/// 
+///
 /// # Overflow Protection
-/// 
+///
 /// Using saturating multiplication prevents overflow panics that could halt the oracle,
 /// while the right shift maintains fixed-point precision. This is critical for EMA
 /// calculations where intermediate products can temporarily exceed normal value ranges.
@@ -40,15 +42,15 @@ fn mul_fp(a: i128, b: i128) -> i128 {
 }
 
 /// Locate observation indices for TWAP calculation over a specified time window.
-/// 
+///
 /// # Time Window Strategy
-/// 
+///
 /// This function implements binary search through the circular observation buffer to find
 /// the optimal historical observation pair for TWAP calculation. The algorithm balances
 /// accuracy (longer time windows) with data availability (observations may be sparse).
-/// 
+///
 /// # Security Considerations
-/// 
+///
 /// - Validates window size to prevent manipulation through micro-timeframes
 /// - Checks data freshness to avoid stale price propagation
 /// - Uses wrapping arithmetic to handle timestamp overflow gracefully
@@ -56,15 +58,18 @@ pub fn find_observation_for_window(
     observation_reader: &ObservationReader,
     current_timestamp: i64,
     window_size: u32,
-) -> Result <(usize, usize, u32)> {
+) -> Result<(usize, usize, u32)> {
     // Enforce minimum window size to prevent manipulation through ultra-short time periods
     // that could be gamed by coordinated trading within single blocks
-    require!(window_size >= OBSERVATION_UPDATE_DURATION, RaydiumObserverError::InvalidWindow);
+    require!(
+        window_size >= OBSERVATION_UPDATE_DURATION,
+        RaydiumObserverError::InvalidWindow
+    );
 
     let index_now = observation_reader.current_index();
     let observation_now = observation_reader.get_observation(index_now);
     let timestamp_now = observation_now.block_timestamp() as i64;
-    
+
     // Uninitialized observations have zero timestamps - critical safety check
     // to prevent calculation with invalid data
     require!(timestamp_now != 0, RaydiumObserverError::InvalidIndex);
@@ -72,7 +77,7 @@ pub fn find_observation_for_window(
     // Calculate data staleness using wrapping arithmetic to handle potential timestamp overflow
     // in long-running systems or during timestamp resets
     let staleness = current_timestamp.wrapping_sub(timestamp_now);
-    
+
     // Be more permissive with staleness for integration testing and sparse data scenarios
     // Allow up to 10 minutes of staleness instead of strict 30 seconds
     require!(staleness <= 600, RaydiumObserverError::InsufficientTime);
@@ -83,10 +88,14 @@ pub fn find_observation_for_window(
     // Limited to (OBSERVATION_NUM - 1) iterations to prevent infinite loops
     let mut index_then = index_now;
     for _ in 0..(OBSERVATION_NUM - 1) {
-        let previous_index = if index_then == 0 { OBSERVATION_NUM - 1} else { index_then - 1};
+        let previous_index = if index_then == 0 {
+            OBSERVATION_NUM - 1
+        } else {
+            index_then - 1
+        };
         let previous_observation = observation_reader.get_observation(previous_index);
         let previous_timestamp = previous_observation.block_timestamp() as i64;
-        
+
         // Break on uninitialized observations (timestamp == 0)
         if previous_timestamp == 0 {
             break;
@@ -94,7 +103,8 @@ pub fn find_observation_for_window(
 
         // Use wrapping subtraction with signed comparison to handle timestamp overflow
         // The (i64::MAX >> 1) threshold ensures correct temporal ordering even with wrap-around
-        let previous_before_equals_target = target_timestamp.wrapping_sub(previous_timestamp) < (i64::MAX >> 1);
+        let previous_before_equals_target =
+            target_timestamp.wrapping_sub(previous_timestamp) < (i64::MAX >> 1);
 
         if previous_before_equals_target {
             index_then = previous_index;
@@ -119,19 +129,19 @@ pub fn find_observation_for_window(
 }
 
 /// Calculate time-weighted average price tick from cumulative tick observations.
-/// 
+///
 /// # TWAP Mathematical Foundation
-/// 
+///
 /// TWAP = (cumulative_tick_end - cumulative_tick_start) / time_elapsed
-/// 
+///
 /// This formula relies on the property that cumulative ticks represent the integral
 /// of price over time, making their difference over a time period equivalent to
 /// the average price during that period. This approach is manipulation-resistant
 /// because it requires sustained price movement rather than instantaneous spikes.
-/// 
+///
 /// # Overflow Safety Strategy
-/// 
-/// Wrapping subtraction handles cumulative value overflow gracefully, as the 
+///
+/// Wrapping subtraction handles cumulative value overflow gracefully, as the
 /// mathematical difference remains correct even when individual cumulative values
 /// wrap around the integer boundary during long-running calculations.
 #[inline(always)]
@@ -146,7 +156,7 @@ pub fn twap_tick_from_cumulatives(
         // Return 0 as a signal that this should be handled differently upstream
         return Ok(0);
     }
-    
+
     // Prevent division by zero for any other edge cases
     require!(seconds_elapsed > 0, RaydiumObserverError::InsufficientTime);
 
@@ -157,30 +167,33 @@ pub fn twap_tick_from_cumulatives(
 
     // Validate result is within valid tick range to prevent downstream calculation errors
     // Invalid ticks could cause price conversion functions to panic or return incorrect values
-    require!(tick >= MIN_TICK as i64 && tick <= MAX_TICK as i64, RaydiumObserverError::TickOutOfBounds);
+    require!(
+        tick >= MIN_TICK as i64 && tick <= MAX_TICK as i64,
+        RaydiumObserverError::TickOutOfBounds
+    );
 
     Ok(tick)
 }
 
 /// Calculate T2EMA (Triple Exponential Moving Average with Lag Compensation) for trend analysis.
-/// 
+///
 /// # T2EMA Algorithm Rationale
-/// 
+///
 /// T2EMA = 2*EMA1 - EMA2 where EMA2 = EMA(EMA1)
-/// 
+///
 /// This algorithm provides superior trend-following characteristics compared to simple
 /// moving averages by using double smoothing with lag compensation. The mathematical
 /// properties make it more responsive to genuine trend changes while being resistant
 /// to short-term noise and manipulation attempts.
-/// 
+///
 /// # Fixed-Point Precision Strategy
-/// 
+///
 /// All calculations use 32-bit fixed-point arithmetic to maintain precision while
 /// avoiding floating-point operations that could introduce non-deterministic behavior
 /// across different hardware platforms. This is critical for consensus in blockchain
 /// environments where all nodes must produce identical results.
 #[inline(always)]
-pub fn t2ema_tick (
+pub fn t2ema_tick(
     observation_reader: &ObservationReader,
     index_then: usize,
     index_now: usize,
@@ -188,7 +201,10 @@ pub fn t2ema_tick (
 ) -> Result<i64> {
     // Validate smoothing factor is within meaningful range (0.01% to 100%)
     // Zero alpha would prevent any price updates, while >100% is mathematically invalid
-    require!(alpha_basis_points > 0 && alpha_basis_points <= 10_000, RaydiumObserverError::InvalidWindow);
+    require!(
+        alpha_basis_points > 0 && alpha_basis_points <= 10_000,
+        RaydiumObserverError::InvalidWindow
+    );
 
     // Convert basis points to fixed-point representation for precise calculations
     let alpha = (FP_ONE * (alpha_basis_points as i128)) / 10_000i128;
@@ -219,7 +235,7 @@ pub fn t2ema_tick (
         }
 
         let delta_time = timestamp_j.saturating_sub(timestamp_i);
-        
+
         // Skip zero-duration intervals that would cause division by zero
         // These can occur during rapid block production or timestamp anomalies
         if delta_time == 0 {
@@ -231,8 +247,12 @@ pub fn t2ema_tick (
             continue;
         }
 
-        let delta_tick = observation_j.tick_cumulative().wrapping_sub(observation_i.tick_cumulative());
-        let tick_average = delta_tick.checked_div(delta_time).ok_or(RaydiumObserverError::MathError)?;
+        let delta_tick = observation_j
+            .tick_cumulative()
+            .wrapping_sub(observation_i.tick_cumulative());
+        let tick_average = delta_tick
+            .checked_div(delta_time)
+            .ok_or(RaydiumObserverError::MathError)?;
 
         // Clamp tick values to valid range to prevent downstream calculation errors
         // Invalid ticks could propagate through the EMA and corrupt final results
@@ -263,26 +283,29 @@ pub fn t2ema_tick (
     let tick = (t2_raw >> FP_SHIFT) as i64;
 
     // Final validation to ensure result is within valid tick range
-    require!(tick >= MIN_TICK as i64 && tick <= MAX_TICK as i64, RaydiumObserverError::TickOutOfBounds);
+    require!(
+        tick >= MIN_TICK as i64 && tick <= MAX_TICK as i64,
+        RaydiumObserverError::TickOutOfBounds
+    );
 
     Ok(tick)
 }
 
 /// Calculate confidence metric based on price variance analysis across observation window.
-/// 
+///
 /// # Statistical Foundation
-/// 
+///
 /// Confidence is derived from price variance using the formula: variance = E[X²] - E[X]²
 /// Lower variance indicates more stable price behavior and higher confidence in the TWAP result.
 /// This metric helps detect periods of high volatility or potential manipulation where
 /// price stability is compromised.
-/// 
+///
 /// # Confidence Scoring Strategy
-/// 
+///
 /// Returns confidence as basis points (0-10,000) where:
 /// - 10,000 = maximum confidence (low variance, stable prices)
 /// - 0 = minimum confidence (high variance, volatile prices)
-/// 
+///
 /// This scaling allows for precise risk assessment in downstream applications.
 pub fn confidence_from_variance(
     observation_reader: &ObservationReader,
@@ -314,7 +337,7 @@ pub fn confidence_from_variance(
         }
 
         let delta_time = timestamp_j.saturating_sub(timestamp_i);
-        
+
         // Skip zero-duration intervals that would cause division by zero
         // These intervals don't contribute meaningful price information
         if delta_time == 0 {
@@ -326,8 +349,12 @@ pub fn confidence_from_variance(
             continue;
         }
 
-        let delta_tick = observation_j.tick_cumulative().wrapping_sub(observation_i.tick_cumulative());
-        let t = delta_tick.checked_div(delta_time).ok_or(RaydiumObserverError::MathError)? as i128;
+        let delta_tick = observation_j
+            .tick_cumulative()
+            .wrapping_sub(observation_i.tick_cumulative());
+        let t = delta_tick
+            .checked_div(delta_time)
+            .ok_or(RaydiumObserverError::MathError)? as i128;
 
         // Accumulate sample count and statistical moments for variance calculation
         n += 1;
@@ -350,9 +377,9 @@ pub fn confidence_from_variance(
     // Calculate sample variance: Var(X) = E[X²] - E[X]²
     let mean = sum / (n as i128);
     let mean_square = mean.saturating_mul(mean);
-    
+
     let variance_raw = (sum2 / (n as i128)).saturating_sub(mean_square);
-    
+
     // Clamp variance to u32 range and handle potential underflow from numerical precision
     let variance = if variance_raw < 0 {
         0u32
@@ -370,23 +397,23 @@ pub fn confidence_from_variance(
 }
 
 /// Assess manipulation risk by combining multiple risk factors into composite score.
-/// 
+///
 /// # Multi-Factor Risk Model
-/// 
+///
 /// This function implements a comprehensive risk assessment model that evaluates:
 /// 1. **Price Variance Risk**: Statistical stability of price movements
 /// 2. **Deviation Risk**: Magnitude of price deviation from current levels
 /// 3. **Staleness Risk**: Data freshness and update frequency
 /// 4. **Liquidity Risk**: Available liquidity depth for manipulation resistance
-/// 
+///
 /// # Risk Scoring Design
-/// 
+///
 /// Returns risk as basis points (0-10,000) where higher values indicate greater
 /// manipulation risk. The composite scoring allows for fine-grained risk assessment
 /// and enables downstream applications to make informed decisions about price reliability.
-/// 
+///
 /// # Security Architecture
-/// 
+///
 /// By combining multiple independent risk factors, this function makes it significantly
 /// more difficult for attackers to game the risk assessment system, as they would need
 /// to simultaneously manipulate variance, deviation, timing, and liquidity metrics.
@@ -411,17 +438,17 @@ pub fn assess_manipulation_risk(
     // Normal age (30-1800s): low risk, optimal freshness window
     // Stale data (>1800s): high risk due to outdated information
     let stale_risk = match seconds_elapsed {
-        0..=29 => 2000,    // Recent but potentially volatile
-        30..=1800 => 500,  // Optimal freshness window
-        _ => 2000,         // Too stale for reliable pricing
+        0..=29 => 2000,   // Recent but potentially volatile
+        30..=1800 => 500, // Optimal freshness window
+        _ => 2000,        // Too stale for reliable pricing
     };
 
     // Evaluate liquidity risk for manipulation resistance
     // Low liquidity makes price manipulation cheaper and easier to execute
     let liquidity_risk = if liquidity_weight < min_liquidity {
-        4000  // High risk: insufficient liquidity depth
+        4000 // High risk: insufficient liquidity depth
     } else {
-        500   // Low risk: adequate manipulation resistance
+        500 // Low risk: adequate manipulation resistance
     };
 
     // Combine all risk factors with saturation arithmetic to prevent overflow

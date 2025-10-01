@@ -83,7 +83,11 @@ fn feed_flags_truncate_after_corruption() {
     let sanitized = FeedFlags::from_u8_truncate(recovered.as_u8());
     assert!(sanitized.is_active());
     assert!(sanitized.is_trusted());
-    assert_eq!(sanitized.as_u8() & !FeedFlags::VALID_MASK, 0, "unknown bits must be truncated");
+    assert_eq!(
+        sanitized.as_u8() & !FeedFlags::VALID_MASK,
+        0,
+        "unknown bits must be truncated"
+    );
 }
 
 /// `SourceType` is part of the external contract; keeping it byte-sized
@@ -100,7 +104,11 @@ fn source_type_anchor_roundtrip() {
     for variant in variants {
         let serialized = variant.try_to_vec().expect("serialize source type");
         // One-byte discriminants keep encodings compact and predictable.
-        assert_eq!(serialized.len(), 1, "source type should occupy exactly one byte");
+        assert_eq!(
+            serialized.len(),
+            1,
+            "source type should occupy exactly one byte"
+        );
         let recovered = SourceType::try_from_slice(&serialized).expect("deserialize source type");
         assert_eq!(variant, recovered);
     }
@@ -124,9 +132,16 @@ fn price_feed_default_baseline() {
     assert_eq!(default_feed.manipulation_score, 0);
     // Default to the conservative `DEX` source to avoid overly trusting
     // external or privileged feeds by default.
-    assert_eq!(default_feed.source_type, SourceType::DEX.as_u8(), "default source should map to conservative fallback");
+    assert_eq!(
+        default_feed.source_type,
+        SourceType::DEX.as_u8(),
+        "default source should map to conservative fallback"
+    );
     assert_eq!(default_feed.flags.as_u8(), 0);
-    assert!(default_feed._padding.iter().all(|byte| *byte == 0), "default padding must be zeroed");
+    assert!(
+        default_feed._padding.iter().all(|byte| *byte == 0),
+        "default padding must be zeroed"
+    );
 }
 
 /// Mutations to live fields must not touch padding so serialized blobs
@@ -141,11 +156,17 @@ fn padding_stays_zero_after_mutations() {
     // In-memory pad must remain zero after valid mutations. If this fails it
     // often indicates a future refactor that introduced an uninitialized
     // field or incorrect transmute semantics.
-    assert!(feed._padding.iter().all(|byte| *byte == 0), "mutations must not alter padding");
+    assert!(
+        feed._padding.iter().all(|byte| *byte == 0),
+        "mutations must not alter padding"
+    );
 
     // Round-trip serialized image should also keep padding zero to avoid
     // leaking non-deterministic data into on-chain storage.
     let serialized = feed.try_to_vec().expect("serialize mutated feed");
     let recovered = PriceFeed::try_from_slice(&serialized).expect("deserialize mutated feed");
-    assert!(recovered._padding.iter().all(|byte| *byte == 0), "roundtrip must keep padding zeroed");
+    assert!(
+        recovered._padding.iter().all(|byte| *byte == 0),
+        "roundtrip must keep padding zeroed"
+    );
 }
