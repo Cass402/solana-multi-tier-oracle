@@ -225,8 +225,7 @@ mod instruction_tests {
         // Calculation: 2+2+2+2 (metadata) + 8 (timestamp) + 32+32 (pubkeys) + (48*128) (price_points) + 1 (bump) + 511 (reserved)
         // With alignment padding: rounds up to 6736 due to 16-byte alignment requirement
         assert_eq!(
-            EXPECTED_ACCOUNT_SIZE,
-            6736,
+            EXPECTED_ACCOUNT_SIZE, 6736,
             "HistoricalChunk size changed; update deployment scripts and rent calculations"
         );
 
