@@ -1,6 +1,9 @@
 //! Targeted unit tests that exercise the hot-path behaviours of the
-//! `HistoricalChunk` circular buffer. Each test documents a specific safety or
-//! performance guarantee relied upon by production code.
+//! `HistoricalChunk` circular buffer. These tests focus on *why* the buffer
+//! must behave deterministically rather than simply *what* it does. They
+//! capture design decisions, invariants relied upon by higher-level logic
+//! (like TWAP), and safety checks that prevent subtle corruption or
+//! non-determinism in on-chain state.
 
 use super::helpers::{
     alternating_extreme_point, assert_chunk_invariants, assert_price_point_eq, collect_fifo_view,
@@ -9,9 +12,15 @@ use super::helpers::{
 use crate::utils::constants::BUFFER_SIZE;
 use anchor_lang::prelude::Pubkey;
 
-/// Validates that the first write into an empty buffer sets the head pointer,
-/// bumps the element count, and leaves the tail parked at zero. This mirrors the
-/// production bootstrapping path when a fresh historical chunk account is created.
+/// Ensure bootstrapping behavior is predictable when a freshly allocated
+/// `HistoricalChunk` begins receiving writes.
+///
+/// Design rationale:
+/// - The first write must consistently initialize `head` and `count` so callers
+///   that read the 'latest' element or compute FIFO windows can rely on a
+///   single canonical state transition from empty -> non-empty.
+/// - Keeping `tail` at zero until saturation is an intentional choice that
+///   simplifies the empty/full sentinel logic (`head == tail`) used elsewhere.
 #[test]
 fn push_into_empty_chunk_updates_state() {
     let mut chunk = empty_chunk();
@@ -32,10 +41,17 @@ fn push_into_empty_chunk_updates_state() {
     assert_chunk_invariants!(chunk);
 }
 
-/// Exercises the saturation path where the buffer transitions from partially
-/// filled to full and must start advancing the tail pointer to maintain FIFO
-/// semantics. Anchors the expectation that once `count` reaches capacity it
-/// never exceeds `BUFFER_SIZE`.
+/// Verify saturation semantics and the invariant that `count` is always
+/// capped by the buffer capacity.
+///
+/// Why this matters:
+/// - Once the circular buffer reaches capacity it should behave as a rolling
+///   window: writes drop the oldest entries and `count` must not grow beyond
+///   `BUFFER_SIZE`. Many consumers depend on the guarantee that `count`
+///   represents how many valid, retrievable elements exist.
+/// - The moment where `head` wraps back to zero is a sensitive boundary; this
+///   test asserts tail advancement only occurs after the buffer becomes full
+///   to avoid off-by-one or double-advance errors.
 #[test]
 fn push_rolls_tail_only_after_saturation() {
     let mut chunk = empty_chunk();
@@ -71,9 +87,16 @@ fn push_rolls_tail_only_after_saturation() {
     assert_chunk_invariants!(chunk);
 }
 
-/// Confirms that repeated wraparound writes keep FIFO ordering intact. The test
-/// pushes three buffer lengths worth of data and verifies we retain the most
-/// recent `BUFFER_SIZE` entries in the correct logical order.
+/// Stress the wraparound behavior across many cycles and confirm logical FIFO
+/// ordering is preserved.
+///
+/// Rationale:
+/// - In production the chunk may be continuously written. Correctness under
+///   sustained wraparound ensures older values are evicted in the right
+///   sequence and consumers reconstruct TWAP windows deterministically.
+/// - The test builds an expected tail view to compare against the buffer's
+///   FIFO projection rather than relying on physical indices, documenting the
+///   intended abstraction boundary between physical storage and logical order.
 #[test]
 fn sustained_wraparound_preserves_fifo_order() {
     let mut chunk = empty_chunk();
@@ -107,8 +130,14 @@ fn sustained_wraparound_preserves_fifo_order() {
     assert_chunk_invariants!(chunk);
 }
 
-/// Ensures the helper accessor returns `None` when the buffer is empty, which
-/// prevents callers from accidentally dereferencing stale memory.
+/// The `latest()` accessor must return `None` for an empty buffer to prevent
+/// callers (including zero-copy consumers) from dereferencing uninitialised
+/// memory or assuming stale values.
+///
+/// Safety note:
+/// - Returning `None` for empty avoids accidental UB in code that treats the
+///   returned reference as live data. This check is a small but critical
+///   defensive boundary for callers that mirror on-chain reads.
 #[test]
 fn latest_returns_none_when_empty() {
     let chunk = empty_chunk();
@@ -118,9 +147,13 @@ fn latest_returns_none_when_empty() {
     );
 }
 
-/// Verifies that `latest()` returns a reference to the most recently written
-/// datum, even after multiple wraparounds. The reference semantics are critical
-/// for zero-copy consumers that operate directly on the account backing slice.
+/// `latest()` must consistently reference the most recently pushed element.
+///
+/// Why reference semantics matter:
+/// - Several consumers expect a stable borrow into the underlying buffer so
+///   they can read price points without allocating or copying. This test
+///   exercises that contract under wraparound to ensure the returned pointer
+///   remains valid and points at the logical latest entry.
 #[test]
 fn latest_tracks_last_inserted_element() {
     let mut chunk = empty_chunk();
@@ -135,8 +168,13 @@ fn latest_tracks_last_inserted_element() {
     assert_chunk_invariants!(chunk);
 }
 
-/// Documents the `next_chunk` pointer contract: the default pubkey (all zeros)
-/// acts as the sentinel meaning "end of chain".
+/// `next_chunk` uses the default zeroed `Pubkey` as a sentinel to represent
+/// the end of a linked chain of chunks.
+///
+/// Design trade-offs:
+/// - Using an all-zero pubkey avoids adding an extra boolean flag and keeps
+///   the struct compact. However, it requires callers to treat the default
+///   key specially rather than relying on Option-like semantics.
 #[test]
 fn has_next_reports_chain_membership() {
     let mut chunk = empty_chunk();
@@ -158,9 +196,15 @@ fn has_next_reports_chain_membership() {
     );
 }
 
-/// Validates that the empty/full sentinel property holds across a mixture of
-/// operations. This guards the core invariant relied upon by callers when they
-/// need to distinguish the two cases where `head == tail`.
+/// The `head == tail` condition must only occur in exactly two logical
+/// states: empty and full. Consumers rely on this sentinel to disambiguate
+/// buffer state without extra storage.
+///
+/// Why the invariant is important:
+/// - Many algorithms (e.g., building TWAP windows) use the `head`/`tail`
+///   pointers to determine iteration bounds. If `head == tail` could occur in
+///   other scenarios, callers would need additional metadata to safely iterate
+///   the buffer, increasing on-chain storage and complexity.
 #[test]
 fn tail_equals_head_only_when_empty_or_full() {
     let mut chunk = empty_chunk();
@@ -185,8 +229,15 @@ fn tail_equals_head_only_when_empty_or_full() {
     assert_chunk_invariants!(chunk);
 }
 
-/// Stress test that alternates between signed extremes to flush out overflow
-/// regressions in arithmetic that downstream TWAP logic depends on.
+/// Stress test using alternating extreme price points to exercise integer
+/// boundary conditions and ensure no arithmetic or index overflow corrupts
+/// buffer state.
+///
+/// Safety rationale:
+/// - TWAP and other aggregation logic often perform arithmetic over i128
+///   values. This test writes both the maximum and minimum representable
+///   values (adjusted) to ensure the buffer and its consumers handle edge
+///   cases without panic, overflow, or loss of ordering.
 #[test]
 fn alternating_extremes_do_not_corrupt_buffer() {
     let mut chunk = empty_chunk();

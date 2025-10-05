@@ -10,9 +10,28 @@ use proptest::prelude::*;
 use std::mem::{size_of, MaybeUninit};
 use std::ptr;
 
+/// Small helpers used across historical chunk unit tests. These helpers are
+/// intentionally minimal and explicit to keep test fixtures tightly controlled
+/// and resilient to schema changes.
+///
+/// Key goals:
+/// - Provide deterministic, explainable fixtures so tests fail for
+///   meaningful reasons (not flaky randomness).
+/// - Mirror zero-copy runtime behaviour where appropriate (copy from memory
+///   into bytes and back) so tests exercise the same assumptions production
+///   code relies upon.
+
 /// Convenience constant for working with `u16` indices inside the circular buffer.
+/// Keeping a typed alias simplifies masking arithmetic and makes intentions
+/// explicit in tests that manipulate indices.
 pub(crate) const BUFFER_SIZE_U16: u16 = BUFFER_SIZE as u16;
 
+/// Compact macro asserting core pointer/count invariants for a `HistoricalChunk`.
+///
+/// Why a macro:
+/// - Tests need to assert the same structural invariants in many places. The
+///   macro keeps assertions colocated with failure messages while avoiding
+///   fragile helper functions that might themselves introduce borrow issues.
 macro_rules! assert_chunk_invariants {
     ($chunk:expr) => {{
         let chunk_ref = &$chunk;
@@ -29,6 +48,9 @@ macro_rules! assert_chunk_invariants {
             "count cannot exceed fixed buffer capacity"
         );
 
+        // The `head == tail` condition acts as a sentinel for two logical
+        // states only: empty and full. Enforcing this here captures a
+        // fundamental invariant relied on by iteration logic.
         if chunk_ref.head == chunk_ref.tail {
             assert!(
                 chunk_ref.count == 0 || chunk_ref.count == BUFFER_SIZE_U16,
@@ -42,8 +64,10 @@ pub(crate) use assert_chunk_invariants;
 
 /// Creates a zeroed-out `HistoricalChunk` fixture with deterministic defaults.
 ///
-/// Keeping the constructor explicit makes the tests resilient to future schema
-/// tweaks — if a new field is added, the compiler forces us to initialize it here.
+/// Rationale:
+/// - Tests prefer explicit construction to avoid accidental reliance on `Default`
+///   semantics that might change. When a new field is added the compiler will
+///   force updates here, making test churn intentional and obvious.
 pub(crate) fn empty_chunk() -> HistoricalChunk {
     HistoricalChunk {
         chunk_id: 0,
@@ -61,6 +85,10 @@ pub(crate) fn empty_chunk() -> HistoricalChunk {
 
 /// Produces a deterministic `PricePoint` whose values are spaced far enough
 /// apart to catch accidental field swaps during assertions.
+///
+/// Design notes:
+/// - The arithmetic uses primes and non-trivial offsets to make it unlikely
+///   that two separate fields accidentally collide under common mistakes.
 pub(crate) fn deterministic_price_point(seed: i64) -> PricePoint {
     PricePoint {
         price: 1_000_000_000_000 + (seed as i128 * 997),
@@ -72,6 +100,11 @@ pub(crate) fn deterministic_price_point(seed: i64) -> PricePoint {
 
 /// Extremal price point generator used in stress tests to flush out overflow
 /// behaviour when alternating between signed bounds.
+///
+/// Why extremes:
+/// - Using i128 boundaries and near-minimum values exercises integer
+///   arithmetic, potential negation pitfalls, and any dependent aggregation
+///   logic (e.g., TWAP) that may assume narrower ranges.
 pub(crate) fn alternating_extreme_point(index: usize) -> PricePoint {
     if index % 2 == 0 {
         PricePoint {
@@ -82,6 +115,8 @@ pub(crate) fn alternating_extreme_point(index: usize) -> PricePoint {
         }
     } else {
         PricePoint {
+            // Avoid using the absolute minimum when downstream maths may
+            // attempt a negate operation which would overflow.
             price: i128::MIN + 1, // avoid MIN_NEGATE overflow in downstream maths
             volume: i128::MIN + 1,
             conf: 1,
@@ -93,6 +128,11 @@ pub(crate) fn alternating_extreme_point(index: usize) -> PricePoint {
 /// Helper for comparing `PricePoint` values field-by-field with descriptive
 /// panic messages — derived equality is not available because the struct omits
 /// `PartialEq` for zero-copy ergonomics.
+///
+/// Why not `#[derive(PartialEq)]`:
+/// - The production struct is tuned for zero-copy reads and may intentionally
+///   avoid traits that imply ownership semantics; explicit field comparisons
+///   make test failures clearer about which property regressed.
 pub(crate) fn assert_price_point_eq(actual: &PricePoint, expected: &PricePoint) {
     assert_eq!(actual.price, expected.price, "price mismatch");
     assert_eq!(actual.volume, expected.volume, "volume mismatch");
@@ -103,6 +143,10 @@ pub(crate) fn assert_price_point_eq(actual: &PricePoint, expected: &PricePoint) 
 /// Collects the logical FIFO ordering from a circular buffer by iterating from
 /// `tail` across `count` entries. This is useful for asserting historical order
 /// in tests that operate on saturated buffers.
+///
+/// Note on implementation:
+/// - The implementation mirrors the on-chain projection consumers use so tests
+///   validate the same logical ordering those consumers will observe.
 pub(crate) fn collect_fifo_view(chunk: &HistoricalChunk) -> Vec<PricePoint> {
     let mut out = Vec::with_capacity(chunk.count as usize);
     let mut idx = chunk.tail;
@@ -116,6 +160,11 @@ pub(crate) fn collect_fifo_view(chunk: &HistoricalChunk) -> Vec<PricePoint> {
 /// Copies the raw bytes underpinning a historical chunk. This mirrors Anchor's
 /// zero-copy account loading behaviour and is used to validate deterministic
 /// byte representations without relying on additional trait implementations.
+///
+/// Safety rationale:
+/// - The function uses `unsafe` pointer copying to avoid intermediate
+///   serialization logic; tests exercise this path to ensure byte-level
+///   determinism matches in-memory representations.
 pub(crate) fn chunk_to_bytes(chunk: &HistoricalChunk) -> Vec<u8> {
     let mut bytes = vec![0u8; size_of::<HistoricalChunk>()];
     unsafe {
@@ -131,6 +180,12 @@ pub(crate) fn chunk_to_bytes(chunk: &HistoricalChunk) -> Vec<u8> {
 /// Reconstructs a `HistoricalChunk` from a byte slice previously produced by
 /// `chunk_to_bytes`. This simulates the zero-copy account deserialization path
 /// used inside the Solana runtime.
+///
+/// Safety note:
+/// - Using `MaybeUninit` and raw copies reproduces the exact memory layout a
+///   zero-copy reader would observe. Tests using this function should only
+///   operate on slices produced by `chunk_to_bytes` to avoid undefined
+///   behaviour from arbitrary inputs.
 pub(crate) fn chunk_from_bytes(bytes: &[u8]) -> HistoricalChunk {
     assert_eq!(bytes.len(), size_of::<HistoricalChunk>());
     let mut uninit = MaybeUninit::<HistoricalChunk>::uninit();
@@ -142,6 +197,11 @@ pub(crate) fn chunk_from_bytes(bytes: &[u8]) -> HistoricalChunk {
 
 /// Prepares an `OracleState` instance with benign defaults so tests can exercise
 /// cross-structure interactions without re-declaring boilerplate for every field.
+///
+/// Rationale:
+/// - Tests should avoid constructing a full `OracleState` each time. A minimal,
+///   conservative fixture reduces noise and makes it clear which fields matter
+///   for the specific test.
 pub(crate) fn minimal_oracle_state() -> OracleState {
     OracleState {
         authority: Pubkey::new_unique(),
@@ -173,6 +233,10 @@ pub(crate) fn minimal_oracle_state() -> OracleState {
 /// Strategy that emits arbitrary `PricePoint` values while ensuring timestamps
 /// stay within a realistic (but broad) range. The wide domain helps fuzz tests
 /// poke at bitmask wraparound and signed arithmetic simultaneously.
+///
+/// Note:
+/// - This strategy is kept `dead_code`-allowed because it's useful for
+///   exploratory fuzzing but not required by every unit test.
 #[allow(dead_code)]
 pub(crate) fn proptest_price_point_strategy() -> impl Strategy<Value = PricePoint> {
     (

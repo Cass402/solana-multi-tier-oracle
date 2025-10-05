@@ -12,6 +12,7 @@
 
 pub mod core_unit_tests;
 pub mod helpers;
+pub mod instruction_integration;
 pub mod layout_zero_copy;
 pub mod property_tests;
 pub mod serialization_and_integration;

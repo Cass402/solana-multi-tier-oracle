@@ -1,5 +1,14 @@
 //! Tests that exercise serialization round-trips and the integration hook into
 //! `OracleState::check_snapshot_requirements_from_history`.
+//!
+//! Intent and risk model:
+//! - These tests validate two orthogonal but related contracts: (1) that the
+//!   in-memory representation of historical chunks serializes to deterministic
+//!   byte images compatible with zero-copy readers, and (2) that the snapshot
+//!   sufficiency checks (time-window and count) behave as the governance
+//!   policy intends. Both areas are sensitive: the former to layout/ABI
+//!   drift, the latter to logic/regression errors that could allow stale or
+//!   insufficient historical data to be accepted.
 
 use super::helpers::{
     assert_chunk_invariants, assert_price_point_eq, chunk_from_bytes, chunk_to_bytes,
@@ -37,6 +46,12 @@ fn build_chunk_with_seed_range(
 
 #[test]
 fn linked_chunks_preserve_fifo_across_chain() {
+    // This test models a multi-chunk chain of historical data as used when
+    // the circular buffer rolls over into a new account. It asserts the
+    // higher-level invariant that traversing successive chunks yields a
+    // single, monotonically increasing FIFO of price points. This is crucial
+    // because snapshot and TWAP consumers stitch history across chunk
+    // boundaries and must not see gaps or re-ordering.
     struct ChunkAccount {
         address: Pubkey,
         data: HistoricalChunk,
@@ -118,6 +133,13 @@ fn linked_chunks_preserve_fifo_across_chain() {
 }
 /// Roundtrip through the zero-copy byte image to prove the struct retains
 /// deterministic representations compatible with Anchor account loading.
+///
+/// Why this matters:
+/// - Zero-copy readers map account bytes directly into structs. Any
+///   divergence between the in-memory layout and its raw byte image will
+///   break that mapping. We assert field-level equality and normalized
+///   reserved/padding to catch issues that could emerge after refactors or
+///   compiler toolchain changes.
 #[test]
 fn anchor_roundtrip_preserves_historical_chunk_bytes() {
     let oracle_state_pk = Pubkey::new_unique();
@@ -162,6 +184,12 @@ fn build_historical_span(total_points: usize, end_seed: i64) -> Vec<HistoricalCh
 /// Integration test proving that real historical chunks can satisfy a 72-hour
 /// redemption window, demonstrating the intended flow for production snapshot
 /// validation.
+///
+/// Design rationale:
+/// - Snapshot sufficiency is a safety-critical check: accepting an
+///   insufficient snapshot may expose downstream systems (liquidation,
+///   settlement) to stale data. We construct contiguous history to show the
+///   ideal path meets governance requirements.
 #[test]
 fn seventy_two_hour_requirement_succeeds_with_contiguous_history() {
     let oracle_state: OracleState = minimal_oracle_state();
@@ -192,6 +220,12 @@ fn seventy_two_hour_requirement_succeeds_with_contiguous_history() {
 /// time span narrowly misses 96h due to 15-minute granularity. The snapshot
 /// logic should therefore flag this as insufficient, providing a safety margin
 /// rather than silently passing degraded data.
+///
+/// Why this is conservative:
+/// - The system intentionally errs on the side of rejecting marginal history
+///   that does not clearly meet the requested window. This prevents subtle
+///   acceptance of under-sampled data which could be exploited or lead to
+///   degraded economic decisions.
 #[test]
 fn ninety_six_hour_requirement_flags_time_span_gap() {
     let oracle_state: OracleState = minimal_oracle_state();
@@ -223,6 +257,13 @@ fn ninety_six_hour_requirement_flags_time_span_gap() {
 /// Demonstrates timestamp filtering: points older than the requested window are
 /// excluded, ensuring the validator does not accidentally include stale data in
 /// the sufficiency count.
+///
+/// Note on granularity:
+/// - Historical snapshots are sampled at discrete intervals (e.g., 15 minutes).
+///   The count-based logic must therefore combine both time-span and count
+///   checks to avoid off-by-one acceptance around window edges. This test
+///   ensures older points outside the window are not counted even if they are
+///   present in adjacent chunks.
 #[test]
 fn timestamp_filtering_discards_out_of_window_points() {
     let oracle_state: OracleState = minimal_oracle_state();

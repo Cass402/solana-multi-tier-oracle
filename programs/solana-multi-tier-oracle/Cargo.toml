@@ -25,4 +25,10 @@ ethnum = "1.5.2"
 
 [dev-dependencies]
 proptest = "1.7"
+criterion = { version = "0.7", default-features = false, features = ["cargo_bench_support"] }
+
+
+[[bench]]
+name = "historical_chunk_push"
+harness = false
 

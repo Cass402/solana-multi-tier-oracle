@@ -1,5 +1,16 @@
-//! Property-based tests that hammer the circular buffer using randomised input
-//! sequences. These catch edge cases that hand-written unit tests might miss.
+//! Property-based tests that aggressively exercise the circular buffer using
+//! randomized input sequences. The goal here is to exercise edge cases that
+//! deterministic unit tests may miss—particularly around wraparound arithmetic,
+//! index masking, and signed arithmetic boundaries that can cause panics or
+//! silently incorrect state.
+//!
+//! Why property tests:
+//! - Unit tests assert specific, expected behaviors. Property tests instead
+//!   assert invariants that must always hold regardless of input order or
+//!   magnitude. This helps catch subtle regressions introduced by refactors.
+//! - The circular buffer relies heavily on bitmask arithmetic and fixed-size
+//!   indices; randomized sequences increase confidence that pointer math is
+//!   robust under a wide range of inputs.
 
 use super::helpers::{
     assert_chunk_invariants, assert_price_point_eq, collect_fifo_view, empty_chunk,
@@ -11,9 +22,16 @@ use proptest::prelude::*;
 
 proptest! {
     #![proptest_config(ProptestConfig { cases: 64, max_shrink_iters: 100, .. ProptestConfig::default() })]
-    /// Random push sequences should never violate buffer invariants. This test
-    /// ensures pointer arithmetic stays within bounds regardless of input
-    /// patterns, defending against panic-triggering wraparound bugs.
+    /// Property: random push sequences never violate core buffer invariants.
+    ///
+    /// Rationale:
+    /// - The circular buffer uses wraparound masking and fixed-size counters.
+    ///   Off-by-one arithmetic or incorrect masking often only surfaces when
+    ///   inputs hit unusual sequences — randomized testing helps find those
+    ///   sequences.
+    /// - We assert both structural invariants (head/tail/count ranges) and
+    ///   behavioural invariants (latest element equals the last pushed item)
+    ///   to ensure both memory safety and semantic correctness.
     fn random_push_sequences_preserve_invariants(points in vec(proptest_price_point_strategy(), 0..512)) {
         let mut chunk = empty_chunk();
 
@@ -51,9 +69,14 @@ proptest! {
         }
     }
 
-    /// Randomised timestamp/price combinations should never cause panics and
-    /// must keep the buffer logically full once capacity is reached. This test
-    /// defends against arithmetic overflows that could modify `count`.
+    /// Property: long sequences of randomized inputs must cap `count` at the
+    /// configured buffer size and avoid panics.
+    ///
+    /// Safety focus:
+    /// - This test targets overflow or wraparound bugs in arithmetic used to
+    ///   update `count`, `head`, and `tail`. By pushing between `BUFFER_SIZE`
+    ///   and `2*BUFFER_SIZE` items we ensure saturation behaviour stabilizes
+    ///   and that the latest element remains accessible.
     fn randomised_inputs_cap_count(points in vec(proptest_price_point_strategy(), BUFFER_SIZE..BUFFER_SIZE*2)) {
         let mut chunk = empty_chunk();
         for point in points.iter().copied() {
